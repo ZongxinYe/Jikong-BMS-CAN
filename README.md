@@ -11,6 +11,7 @@
 - 支持默认/偏移设备地址、大小端字段、告警故障和 25 串单体电压组帧。
 - 支持 CANalyst-II 设备发现、连接、批量接收、单帧/周期发送和诊断。
 - 支持 CSV 离线回放，并与真实设备统一输出 `CanFrame`。
+- 支持最新 BMS 状态、波形环形缓存、SQLite 后台记录和 CSV 导出。
 - 在不连接硬件的情况下用 PDF 示例帧完成协议测试。
 
 ## 验证
@@ -57,3 +58,20 @@ worker.start()
 ```
 
 真实设备、周期发送、诊断和 CSV 回放接口见 `docs\phase2-can-io.md`。
+
+## 数据记录
+
+```python
+from bms_can_monitor.data import DataPipeline, SessionMetadata, SessionRecorder
+
+recorder = SessionRecorder("records/test.sqlite3")
+recorder.start(SessionMetadata(note="BMS 台架测试"))
+pipeline = DataPipeline(recorder=recorder)
+
+# 对接收队列中的每个 frame 调用：
+pipeline.process_frame(frame)
+
+recorder.stop()
+```
+
+数据库结构、波形缓存和 CSV 导出说明见 `docs\phase3-data-recording.md`。
