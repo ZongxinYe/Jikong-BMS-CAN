@@ -16,6 +16,9 @@ dependencies = [
   "PyYAML",
 ]
 
+[project.scripts]
+bms-can-monitor = "bms_can_monitor.gui.app:main"
+
 [project.optional-dependencies]
 dev = [
   "pytest",

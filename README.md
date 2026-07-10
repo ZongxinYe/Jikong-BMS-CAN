@@ -12,7 +12,23 @@
 - 支持 CANalyst-II 设备发现、连接、批量接收、单帧/周期发送和诊断。
 - 支持 CSV 离线回放，并与真实设备统一输出 `CanFrame`。
 - 支持最新 BMS 状态、波形环形缓存、SQLite 后台记录和 CSV 导出。
+- 支持 CANalyst-II 连接、CSV 回放、实时总览、分轨波形、报文筛选和记录控制 GUI。
 - 在不连接硬件的情况下用 PDF 示例帧完成协议测试。
+
+## 桌面程序
+
+```powershell
+python -m pip install -e ".[dev]"
+bms-can-monitor
+```
+
+无硬件试用：
+
+```powershell
+bms-can-monitor --demo
+```
+
+也可通过 `bms-can-monitor --replay <CAN帧.csv> --speed 5` 启动离线回放。界面功能、线程边界和真机验收项见 `docs\phase4-gui.md`。
 
 ## 验证
 
