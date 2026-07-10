@@ -1,0 +1,140 @@
+VERSION "Jikong BMS CAN Protocol V2.1"
+
+NS_ :
+    NS_DESC_
+    CM_
+    BA_DEF_
+    BA_
+    VAL_
+
+BS_:
+
+BU_: BMS Peripheral
+
+
+BO_ 756 BATT_ST1: 8 BMS
+ SG_ BattVolt : 0|16@1+ (0.1,0) [0|1000] "V" Peripheral
+ SG_ BattCurr : 16|16@1+ (0.1,-400) [-400|1000] "A" Peripheral
+ SG_ SOC : 32|8@1+ (1,0) [0|100] "%" Peripheral
+
+BO_ 1268 CELL_VOLT: 8 BMS
+ SG_ MaxCellVolt : 0|16@1+ (1,0) [0|5000] "mV" Peripheral
+ SG_ MaxCvNO : 16|8@1+ (1,0) [1|250] "" Peripheral
+ SG_ MinCellVolt : 24|16@1+ (1,0) [0|5000] "mV" Peripheral
+ SG_ MinCvNO : 40|8@1+ (1,0) [1|250] "" Peripheral
+
+BO_ 1524 CELL_TEMP: 8 BMS
+ SG_ MaxCellTemp : 0|8@1+ (1,-50) [-50|200] "degC" Peripheral
+ SG_ MaxCtNO : 8|8@1+ (1,0) [1|250] "" Peripheral
+ SG_ MinCellTemp : 16|8@1+ (1,-50) [-50|200] "degC" Peripheral
+ SG_ MinCtNO : 24|8@1+ (1,0) [1|250] "" Peripheral
+ SG_ AvrgCellTemp : 32|8@1+ (1,-50) [-50|200] "degC" Peripheral
+
+BO_ 2036 ALM_INFO: 8 BMS
+ SG_ AlarmCellOvervoltage : 0|2@1+ (1,0) [0|3] "level" Peripheral
+ SG_ AlarmCellUndervoltage : 2|2@1+ (1,0) [0|3] "level" Peripheral
+ SG_ AlarmCellVoltageDifference : 8|2@1+ (1,0) [0|3] "level" Peripheral
+ SG_ AlarmDischargeOvercurrent : 10|2@1+ (1,0) [0|3] "level" Peripheral
+ SG_ AlarmChargeOvercurrent : 12|2@1+ (1,0) [0|3] "level" Peripheral
+ SG_ AlarmHighTemperature : 14|2@1+ (1,0) [0|3] "level" Peripheral
+ SG_ AlarmLowTemperature : 16|2@1+ (1,0) [0|3] "level" Peripheral
+ SG_ AlarmLowSoc : 20|2@1+ (1,0) [0|3] "level" Peripheral
+ SG_ AlarmInternalCommunication : 28|2@1+ (1,0) [0|3] "level" Peripheral
+
+BO_ 2565941492 BATT_ST2: 8 BMS
+ SG_ CapRemain : 0|16@1+ (0.1,0) [0|1000] "Ah" Peripheral
+ SG_ FulChargeCap : 16|16@1+ (0.1,0) [0|1000] "Ah" Peripheral
+ SG_ CycleCap : 32|16@1+ (0.1,0) [0|1000] "Ah" Peripheral
+ SG_ CycleCount : 55|16@0+ (1,0) [0|1000] "" Peripheral
+
+BO_ 2566007028 ALL_TEMP: 8 BMS
+ SG_ TempMaskCode : 0|8@1+ (1,0) [0|31] "" Peripheral
+ SG_ CellTemp1 : 8|8@1+ (1,-50) [-50|200] "degC" Peripheral
+ SG_ CellTemp2 : 16|8@1+ (1,-50) [-50|200] "degC" Peripheral
+ SG_ CellTemp3 : 24|8@1+ (1,-50) [-50|200] "degC" Peripheral
+ SG_ CellTemp4 : 32|8@1+ (1,-50) [-50|200] "degC" Peripheral
+ SG_ CellTemp5 : 40|8@1+ (1,-50) [-50|200] "degC" Peripheral
+
+BO_ 2566072564 BMSERR_INFO: 8 BMS
+ SG_ FaultLineResistance : 0|1@1+ (1,0) [0|1] "" Peripheral
+ SG_ FaultMosOvertemperature : 1|1@1+ (1,0) [0|1] "" Peripheral
+ SG_ FaultCellCountMismatch : 2|1@1+ (1,0) [0|1] "" Peripheral
+ SG_ FaultCurrentSensor : 3|1@1+ (1,0) [0|1] "" Peripheral
+ SG_ FaultCellOvervoltage : 4|1@1+ (1,0) [0|1] "" Peripheral
+ SG_ FaultPackOvervoltage : 5|1@1+ (1,0) [0|1] "" Peripheral
+ SG_ FaultChargeOvercurrent : 6|1@1+ (1,0) [0|1] "" Peripheral
+ SG_ FaultChargeShortCircuit : 7|1@1+ (1,0) [0|1] "" Peripheral
+ SG_ FaultChargeHighTemperature : 9|1@1+ (1,0) [0|1] "" Peripheral
+ SG_ FaultChargeLowTemperature : 10|1@1+ (1,0) [0|1] "" Peripheral
+ SG_ FaultInternalCommunication : 11|1@1+ (1,0) [0|1] "" Peripheral
+ SG_ FaultCellUndervoltage : 12|1@1+ (1,0) [0|1] "" Peripheral
+ SG_ FaultPackUndervoltage : 13|1@1+ (1,0) [0|1] "" Peripheral
+ SG_ FaultDischargeOvercurrent : 14|1@1+ (1,0) [0|1] "" Peripheral
+ SG_ FaultDischargeShortCircuit : 15|1@1+ (1,0) [0|1] "" Peripheral
+ SG_ FaultDischargeHighTemperature : 16|1@1+ (1,0) [0|1] "" Peripheral
+ SG_ FaultChargeMos : 17|1@1+ (1,0) [0|1] "" Peripheral
+ SG_ FaultDischargeMos : 18|1@1+ (1,0) [0|1] "" Peripheral
+
+BO_ 2566138100 BMS_INFO: 8 BMS
+ SG_ BMSRunTime : 0|32@1+ (1,0) [0|4294967295] "s" Peripheral
+ SG_ HeatCur : 32|16@1+ (1,0) [0|5000] "mA" Peripheral
+ SG_ SOH : 48|8@1+ (1,0) [0|100] "%" Peripheral
+
+BO_ 2566203636 BMS_SWITCH_STATUS: 8 BMS
+ SG_ ChgMosSta : 0|1@1+ (1,0) [0|1] "" Peripheral
+ SG_ DchgMosSta : 1|1@1+ (1,0) [0|1] "" Peripheral
+ SG_ BalanSta : 2|1@1+ (1,0) [0|1] "" Peripheral
+ SG_ HeatSta : 3|1@1+ (1,0) [0|1] "" Peripheral
+ SG_ ChgDevPlugSta : 4|1@1+ (1,0) [0|1] "" Peripheral
+ SG_ ACCSta : 5|1@1+ (1,0) [0|1] "" Peripheral
+
+BO_ 2564827380 CELL_VOL_01_04: 8 BMS
+ SG_ CellVolt01 : 0|16@1+ (1,0) [0|10000] "mV" Peripheral
+ SG_ CellVolt02 : 16|16@1+ (1,0) [0|10000] "mV" Peripheral
+ SG_ CellVolt03 : 32|16@1+ (1,0) [0|10000] "mV" Peripheral
+ SG_ CellVolt04 : 48|16@1+ (1,0) [0|10000] "mV" Peripheral
+
+BO_ 2564892916 CELL_VOL_05_08: 8 BMS
+ SG_ CellVolt05 : 0|16@1+ (1,0) [0|10000] "mV" Peripheral
+ SG_ CellVolt06 : 16|16@1+ (1,0) [0|10000] "mV" Peripheral
+ SG_ CellVolt07 : 32|16@1+ (1,0) [0|10000] "mV" Peripheral
+ SG_ CellVolt08 : 48|16@1+ (1,0) [0|10000] "mV" Peripheral
+
+BO_ 2564958452 CELL_VOL_09_12: 8 BMS
+ SG_ CellVolt09 : 0|16@1+ (1,0) [0|10000] "mV" Peripheral
+ SG_ CellVolt10 : 16|16@1+ (1,0) [0|10000] "mV" Peripheral
+ SG_ CellVolt11 : 32|16@1+ (1,0) [0|10000] "mV" Peripheral
+ SG_ CellVolt12 : 48|16@1+ (1,0) [0|10000] "mV" Peripheral
+
+BO_ 2565023988 CELL_VOL_13_16: 8 BMS
+ SG_ CellVolt13 : 0|16@1+ (1,0) [0|10000] "mV" Peripheral
+ SG_ CellVolt14 : 16|16@1+ (1,0) [0|10000] "mV" Peripheral
+ SG_ CellVolt15 : 32|16@1+ (1,0) [0|10000] "mV" Peripheral
+ SG_ CellVolt16 : 48|16@1+ (1,0) [0|10000] "mV" Peripheral
+
+BO_ 2565089524 CELL_VOL_17_20: 8 BMS
+ SG_ CellVolt17 : 0|16@1+ (1,0) [0|10000] "mV" Peripheral
+ SG_ CellVolt18 : 16|16@1+ (1,0) [0|10000] "mV" Peripheral
+ SG_ CellVolt19 : 32|16@1+ (1,0) [0|10000] "mV" Peripheral
+ SG_ CellVolt20 : 48|16@1+ (1,0) [0|10000] "mV" Peripheral
+
+BO_ 2565155060 CELL_VOL_21_24: 8 BMS
+ SG_ CellVolt21 : 0|16@1+ (1,0) [0|10000] "mV" Peripheral
+ SG_ CellVolt22 : 16|16@1+ (1,0) [0|10000] "mV" Peripheral
+ SG_ CellVolt23 : 32|16@1+ (1,0) [0|10000] "mV" Peripheral
+ SG_ CellVolt24 : 48|16@1+ (1,0) [0|10000] "mV" Peripheral
+
+BO_ 2565220596 CELL_VOL_25: 8 BMS
+ SG_ CellVolt25 : 0|16@1+ (1,0) [0|10000] "mV" Peripheral
+
+BO_ 2565927976 CTRL_INFO: 8 Peripheral
+ SG_ MaskCode : 0|8@1+ (1,0) [0|7] "" BMS
+ SG_ ChgSw : 8|8@1+ (1,0) [0|1] "" BMS
+ SG_ DchgSw : 16|8@1+ (1,0) [0|1] "" BMS
+ SG_ BalanSw : 24|8@1+ (1,0) [0|1] "" BMS
+
+BO_ 2550588916 BMS_CHARGE_INFO: 8 BMS
+ SG_ ChgVol : 7|16@0+ (0.1,0) [0|2000] "V" Peripheral
+ SG_ ChgCur : 23|16@0+ (0.1,0) [0|2000] "A" Peripheral
+ SG_ ChgDevSw : 39|8@0+ (1,0) [0|1] "" Peripheral
+ SG_ ChgAndHeat : 47|8@0+ (1,0) [0|1] "" Peripheral
