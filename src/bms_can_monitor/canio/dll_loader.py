@@ -28,6 +28,10 @@ class DllArchitectureError(RuntimeError):
     """Raised when a DLL bitness does not match the Python process."""
 
 
+class DllLoadError(RuntimeError):
+    """Raised when Windows cannot load a validated ControlCAN DLL."""
+
+
 def python_architecture() -> str:
     """Return x86 or x64 for the current Python process."""
 
@@ -95,7 +99,12 @@ def load_controlcan(path: str | Path | None = None) -> ctypes.CDLL:
     """Load ControlCAN.dll after architecture validation."""
 
     info = validate_dll_architecture(path)
-    if platform.system() == "Windows":
-        return ctypes.WinDLL(str(info.path))
-    return ctypes.CDLL(str(info.path))
-
+    try:
+        if platform.system() == "Windows":
+            return ctypes.WinDLL(str(info.path))
+        return ctypes.CDLL(str(info.path))
+    except OSError as exc:
+        raise DllLoadError(
+            f"failed to load ControlCAN.dll; verify the driver and VC++ runtime: "
+            f"{info.path} ({exc})"
+        ) from exc

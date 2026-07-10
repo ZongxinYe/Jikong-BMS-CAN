@@ -16,52 +16,110 @@ from .controlcan_types import (
     ULONG,
     VCI_BOARD_INFO,
     VCI_CAN_OBJ,
+    VCI_CAN_STATUS,
+    VCI_ERR_INFO,
     VCI_INIT_CONFIG,
 )
 from .dll_loader import load_controlcan
 
 
-def load_library(path: str | Path | None = None) -> ctypes.CDLL:
-    """Load ControlCAN.dll and set signatures for core functions."""
+class ControlCanBindingError(RuntimeError):
+    """Raised when a required SDK function is missing from the DLL."""
 
-    dll = load_controlcan(path)
 
-    dll.VCI_OpenDevice.argtypes = [DWORD, DWORD, DWORD]
-    dll.VCI_OpenDevice.restype = DWORD
+def _bind_function(
+    dll: ctypes.CDLL,
+    name: str,
+    argtypes: list[object],
+    restype: object,
+    *,
+    required: bool,
+) -> bool:
+    try:
+        function = getattr(dll, name)
+    except AttributeError as exc:
+        if required:
+            raise ControlCanBindingError(
+                f"ControlCAN.dll is missing required function {name}"
+            ) from exc
+        return False
+    function.argtypes = argtypes
+    function.restype = restype
+    return True
 
-    dll.VCI_CloseDevice.argtypes = [DWORD, DWORD]
-    dll.VCI_CloseDevice.restype = DWORD
 
-    dll.VCI_InitCAN.argtypes = [DWORD, DWORD, DWORD, ctypes.POINTER(VCI_INIT_CONFIG)]
-    dll.VCI_InitCAN.restype = DWORD
+def bind_library(dll: ctypes.CDLL) -> ctypes.CDLL:
+    """Assign ctypes signatures without opening a device."""
 
-    dll.VCI_ReadBoardInfo.argtypes = [DWORD, DWORD, ctypes.POINTER(VCI_BOARD_INFO)]
-    dll.VCI_ReadBoardInfo.restype = DWORD
+    required = {
+        "VCI_OpenDevice": ([DWORD, DWORD, DWORD], DWORD),
+        "VCI_CloseDevice": ([DWORD, DWORD], DWORD),
+        "VCI_InitCAN": (
+            [DWORD, DWORD, DWORD, ctypes.POINTER(VCI_INIT_CONFIG)],
+            DWORD,
+        ),
+        "VCI_ReadBoardInfo": (
+            [DWORD, DWORD, ctypes.POINTER(VCI_BOARD_INFO)],
+            DWORD,
+        ),
+        "VCI_GetReceiveNum": ([DWORD, DWORD, DWORD], ULONG),
+        "VCI_ClearBuffer": ([DWORD, DWORD, DWORD], DWORD),
+        "VCI_StartCAN": ([DWORD, DWORD, DWORD], DWORD),
+        "VCI_ResetCAN": ([DWORD, DWORD, DWORD], DWORD),
+        "VCI_Transmit": (
+            [DWORD, DWORD, DWORD, ctypes.POINTER(VCI_CAN_OBJ), ULONG],
+            ULONG,
+        ),
+        "VCI_Receive": (
+            [DWORD, DWORD, DWORD, ctypes.POINTER(VCI_CAN_OBJ), ULONG, INT],
+            ULONG,
+        ),
+    }
+    optional = {
+        "VCI_FindUsbDevice2": ([ctypes.POINTER(VCI_BOARD_INFO)], DWORD),
+        "VCI_ReadErrInfo": (
+            [DWORD, DWORD, DWORD, ctypes.POINTER(VCI_ERR_INFO)],
+            DWORD,
+        ),
+        "VCI_ReadCANStatus": (
+            [DWORD, DWORD, DWORD, ctypes.POINTER(VCI_CAN_STATUS)],
+            DWORD,
+        ),
+        "VCI_GetReference": (
+            [DWORD, DWORD, DWORD, DWORD, ctypes.c_void_p],
+            DWORD,
+        ),
+        "VCI_SetReference": (
+            [DWORD, DWORD, DWORD, DWORD, ctypes.c_void_p],
+            DWORD,
+        ),
+        "VCI_GetReference2": (
+            [DWORD, DWORD, DWORD, DWORD, ctypes.c_void_p],
+            DWORD,
+        ),
+        "VCI_SetReference2": (
+            [DWORD, DWORD, DWORD, DWORD, ctypes.c_void_p],
+            DWORD,
+        ),
+        "VCI_UsbDeviceReset": ([DWORD, DWORD, DWORD], DWORD),
+    }
 
-    dll.VCI_GetReceiveNum.argtypes = [DWORD, DWORD, DWORD]
-    dll.VCI_GetReceiveNum.restype = ULONG
-
-    dll.VCI_ClearBuffer.argtypes = [DWORD, DWORD, DWORD]
-    dll.VCI_ClearBuffer.restype = DWORD
-
-    dll.VCI_StartCAN.argtypes = [DWORD, DWORD, DWORD]
-    dll.VCI_StartCAN.restype = DWORD
-
-    dll.VCI_ResetCAN.argtypes = [DWORD, DWORD, DWORD]
-    dll.VCI_ResetCAN.restype = DWORD
-
-    dll.VCI_Transmit.argtypes = [DWORD, DWORD, DWORD, ctypes.POINTER(VCI_CAN_OBJ), ULONG]
-    dll.VCI_Transmit.restype = ULONG
-
-    dll.VCI_Receive.argtypes = [DWORD, DWORD, DWORD, ctypes.POINTER(VCI_CAN_OBJ), ULONG, INT]
-    dll.VCI_Receive.restype = ULONG
-
-    if hasattr(dll, "VCI_FindUsbDevice2"):
-        dll.VCI_FindUsbDevice2.argtypes = [ctypes.POINTER(VCI_BOARD_INFO)]
-        dll.VCI_FindUsbDevice2.restype = DWORD
-
+    for name, (argtypes, restype) in required.items():
+        _bind_function(dll, name, argtypes, restype, required=True)
+    for name, (argtypes, restype) in optional.items():
+        _bind_function(dll, name, argtypes, restype, required=False)
     return dll
 
 
-__all__ = ["CANALYST_II_DEVICE_TYPE", "load_library"]
+def load_library(path: str | Path | None = None) -> ctypes.CDLL:
+    """Load ControlCAN.dll and set signatures for core functions."""
 
+    return bind_library(load_controlcan(path))
+
+
+__all__ = [
+    "CANALYST_II_DEVICE_TYPE",
+    "ControlCanBindingError",
+    "bind_library",
+    "load_library",
+]

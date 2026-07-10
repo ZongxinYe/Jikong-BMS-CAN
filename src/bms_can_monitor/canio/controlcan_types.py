@@ -144,13 +144,23 @@ def make_can_obj(
     remote: bool = False,
     extended: bool = False,
     send_type: int = 1,
+    dlc: int | None = None,
 ) -> VCI_CAN_OBJ:
     """Build a single CAN frame structure for VCI_Transmit."""
 
-    if len(data) > 8:
+    payload = bytes(data)
+    if len(payload) > 8:
         raise ValueError("CAN data length must be 0..8 bytes")
+    frame_dlc = len(payload) if dlc is None else dlc
+    if not 0 <= frame_dlc <= 8:
+        raise ValueError("CAN DLC must be 0..8")
+    if remote:
+        if payload:
+            raise ValueError("remote frames cannot contain payload bytes")
+    elif frame_dlc != len(payload):
+        raise ValueError("data frame DLC must equal payload length")
 
-    padded = bytes(data) + b"\x00" * (8 - len(data))
+    padded = payload + b"\x00" * (8 - len(payload))
     return VCI_CAN_OBJ(
         can_id,
         0,
@@ -158,8 +168,7 @@ def make_can_obj(
         send_type,
         1 if remote else 0,
         1 if extended else 0,
-        len(data),
+        frame_dlc,
         (BYTE * 8)(*padded),
         (BYTE * 3)(0, 0, 0),
     )
-
