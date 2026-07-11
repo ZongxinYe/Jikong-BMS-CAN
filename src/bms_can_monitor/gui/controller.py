@@ -90,6 +90,8 @@ class GuiController(QObject):
 
     frames_processed = Signal(object)
     snapshot_updated = Signal(object)
+    bms_snapshot_updated = Signal(int, object)
+    detected_addresses_changed = Signal(object)
     events_received = Signal(object)
     source_changed = Signal(object)
     recording_changed = Signal(object)
@@ -131,6 +133,7 @@ class GuiController(QObject):
         self._control_thread: Thread | None = None
         self._shutdown_requested = False
         self._demo_step = 0
+        self._reported_addresses: tuple[int, ...] = ()
 
         self._frames_processed = 0
         self._decoded_frames = 0
@@ -478,7 +481,7 @@ class GuiController(QObject):
             raise ControlSafetyError("CAN adapter is not ready for transmission")
         if pending:
             raise ControlSafetyError("another BMS control command is still pending")
-        snapshot_timestamp = self.pipeline.state_store.timestamp
+        snapshot_timestamp = self.pipeline.last_seen(config.device_address)
         age = time() - snapshot_timestamp
         if snapshot_timestamp <= 0 or age < 0 or age > MAX_CONTROL_BMS_AGE_SECONDS:
             raise ControlSafetyError("no recent BMS frame was received for the control target")
@@ -572,15 +575,19 @@ class GuiController(QObject):
     def reset_data(self) -> None:
         self._clear_queue(self.frame_queue)
         self._clear_queue(self._event_queue)
-        self.pipeline.state_store.reset()
-        self.pipeline.decoder.cell_voltages.reset()
-        self.pipeline.ring_buffer.clear()
-        self.pipeline.decode_errors = 0
+        previous_addresses = self.pipeline.detected_addresses
+        self.pipeline.reset()
         self._frames_processed = 0
         self._decoded_frames = 0
         self._rate_frames = 0
         self._last_rate = 0.0
         self._rate_started = monotonic()
+        for address in previous_addresses:
+            self.bms_snapshot_updated.emit(
+                address, BmsSnapshot(timestamp=0.0)
+            )
+        self._reported_addresses = ()
+        self.detected_addresses_changed.emit(())
         self.snapshot_updated.emit(BmsSnapshot(timestamp=0.0))
         self.emit_stats()
 
@@ -617,7 +624,7 @@ class GuiController(QObject):
 
         started = monotonic()
         processed: list[tuple[CanFrame, str]] = []
-        decoded_any = False
+        changed_addresses: set[int] = set()
         while len(processed) < frame_limit:
             if (monotonic() - started) * 1000.0 >= time_budget_ms:
                 break
@@ -636,15 +643,22 @@ class GuiController(QObject):
             processed.append((frame, "" if message is None else message.name))
             if message is not None:
                 self._decoded_frames += 1
-                decoded_any = True
+                changed_addresses.add(message.device_address)
 
         count = len(processed)
         if count:
             self._frames_processed += count
             self._rate_frames += count
             self.frames_processed.emit(processed)
-        if decoded_any:
-            self.snapshot_updated.emit(self.pipeline.state_store.snapshot())
+        for address in sorted(changed_addresses):
+            snapshot = self.pipeline.snapshot(address)
+            self.bms_snapshot_updated.emit(address, snapshot)
+            if address == self.pipeline.device_address:
+                self.snapshot_updated.emit(snapshot)
+        detected_addresses = self.pipeline.detected_addresses
+        if detected_addresses != self._reported_addresses:
+            self._reported_addresses = detected_addresses
+            self.detected_addresses_changed.emit(detected_addresses)
         return count
 
     def _handle_recorder_error(self, exc: RecorderError) -> None:

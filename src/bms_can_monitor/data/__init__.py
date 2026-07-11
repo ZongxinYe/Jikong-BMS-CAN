@@ -11,8 +11,8 @@ from .export_csv import (
     list_sessions,
 )
 from .control_audit import ControlAuditError, ControlAuditLog
-from .pipeline import DataPipeline
-from .ring_buffer import SignalPoint, SignalRingBuffer
+from .pipeline import BmsContext, DataPipeline
+from .ring_buffer import BmsSignalKey, SignalPoint, SignalRingBuffer
 from .recorder import (
     RecorderError,
     RecorderQueueFull,
@@ -25,6 +25,8 @@ from .state_store import BmsStateStore
 
 __all__ = [
     "BmsStateStore",
+    "BmsContext",
+    "BmsSignalKey",
     "DataPipeline",
     "ControlAuditError",
     "ControlAuditLog",

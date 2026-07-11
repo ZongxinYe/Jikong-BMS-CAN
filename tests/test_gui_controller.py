@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QApplication
 
 from bms_can_monitor.gui.controller import GuiController
 from bms_can_monitor.gui.demo import build_demo_frames
+from bms_can_monitor.protocol import CanFrame
 
 
 def qapp():
@@ -46,6 +47,37 @@ def test_controller_honors_drain_frame_limit():
     controller.inject_frames(frames)
     assert controller.drain_once(frame_limit=3, time_budget_ms=100) == 3
     assert controller.frame_queue.qsize() == len(frames) - 3
+    controller.shutdown()
+
+
+def test_controller_emits_one_snapshot_per_changed_bms_address():
+    app = qapp()
+    controller = GuiController(start_timers=False)
+    updates = []
+    address_sets = []
+    legacy = []
+    controller.bms_snapshot_updated.connect(
+        lambda address, snapshot: updates.append((address, snapshot))
+    )
+    controller.detected_addresses_changed.connect(address_sets.append)
+    controller.snapshot_updated.connect(legacy.append)
+    frames = [
+        CanFrame(
+            0x02F4 + address,
+            bytes.fromhex("13 01 D7 11 33"),
+            timestamp=time(),
+        )
+        for address in range(5)
+    ]
+
+    controller.inject_frames(frames)
+    controller.drain_once(time_budget_ms=100)
+    app.processEvents()
+
+    assert [address for address, _ in updates] == [0, 1, 2, 3, 4]
+    assert address_sets[-1] == (0, 1, 2, 3, 4)
+    assert len(legacy) == 1
+    assert legacy[0].timestamp == updates[0][1].timestamp
     controller.shutdown()
 
 
