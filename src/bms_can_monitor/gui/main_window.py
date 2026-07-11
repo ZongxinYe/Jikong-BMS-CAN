@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
 )
 
 from bms_can_monitor.canio import CONTROL_CONFIRMATION_PHRASE, BusConfig
+from bms_can_monitor.config import records_directory, user_data_directory
 from bms_can_monitor.protocol import BmsSnapshot, ControlCommand
 
 from .control_panel import ControlPanel
@@ -95,7 +96,8 @@ class MainWindow(QMainWindow):
         self.resize(1440, 900)
         self.setMinimumSize(1024, 680)
         self.setStyleSheet(APP_STYLE)
-        self._last_recording_directory = Path.cwd() / "records"
+        self._user_data_directory = user_data_directory()
+        self._last_recording_directory = records_directory()
 
         self._create_actions()
         self._create_toolbar()
@@ -424,7 +426,11 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(
             self,
             "打开 CAN 回放",
-            str(Path.cwd()),
+            str(
+                self._last_recording_directory
+                if self._last_recording_directory.exists()
+                else self._user_data_directory
+            ),
             "CAN CSV (*.csv);;所有文件 (*)",
         )
         if not path:

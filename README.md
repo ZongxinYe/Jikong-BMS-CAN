@@ -33,6 +33,14 @@ bms-can-monitor --demo
 
 BMS 控制默认锁定，只允许真实 CAN、正常模式、默认地址和近期有报文的场景。MaskCode、双重确认、审计日志及限制见 `docs\phase5-control-safety.md`。
 
+## Windows 发行包
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\build_windows_release.ps1
+```
+
+生成 `dist\BMS-CAN-Monitor\BMS-CAN-Monitor.exe` 和 zip 压缩包。目标电脑无需 Python，但必须安装 CANalyst-II 驱动，并完整保留 `_internal` 目录。打包结构、接线、用户数据目录和故障排查见 `docs\phase6-windows-release.md`；当前真机验收进度见 `docs\phase6-field-validation.md`。
+
 ## 验证
 
 ```powershell

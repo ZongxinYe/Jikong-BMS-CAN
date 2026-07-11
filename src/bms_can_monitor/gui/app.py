@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import pyqtgraph as pg
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtWidgets import QApplication
 
@@ -20,6 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
     source = parser.add_mutually_exclusive_group()
     source.add_argument("--demo", action="store_true", help="start the local BMS demo")
     source.add_argument("--replay", type=Path, help="start replaying a CAN frame CSV")
+    source.add_argument("--smoke-test", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--speed", type=float, default=1.0, help="replay speed multiplier")
     parser.add_argument("--loop", action="store_true", help="loop replay input")
     return parser
@@ -60,7 +62,7 @@ def create_application(argv: list[str] | None = None) -> tuple[QApplication, Mai
 
     controller = GuiController()
     window = MainWindow(controller)
-    if args.demo:
+    if args.demo or args.smoke_test:
         controller.start_demo()
     elif args.replay is not None:
         controller.start_replay(args.replay, speed=args.speed, loop=args.loop)
@@ -68,8 +70,12 @@ def create_application(argv: list[str] | None = None) -> tuple[QApplication, Mai
 
 
 def main() -> int:
-    app, window = create_application(sys.argv[1:])
+    arguments = sys.argv[1:]
+    args = build_parser().parse_args(arguments)
+    app, window = create_application(arguments)
     window.show()
+    if args.smoke_test:
+        QTimer.singleShot(1_500, window.close)
     return app.exec()
 
 

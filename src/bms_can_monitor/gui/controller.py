@@ -103,7 +103,7 @@ class GuiController(QObject):
         *,
         frame_queue_size: int = 50_000,
         start_timers: bool = True,
-        control_audit_path: str | Path = "logs/control-audit.jsonl",
+        control_audit_path: str | Path | None = None,
     ) -> None:
         super().__init__(parent)
         self.frame_queue: Queue[CanFrame] = Queue(maxsize=frame_queue_size)

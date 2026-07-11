@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from bms_can_monitor.config import resource_root
+
 VCI_USBCAN1 = 3
 VCI_USBCAN2 = 4
 VCI_USBCAN2A = 4
@@ -37,8 +39,7 @@ EXTENDED_ID_MASK = 0x1FFFFFFF
 PE_MACHINE_I386 = 0x014C
 PE_MACHINE_AMD64 = 0x8664
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+PROJECT_ROOT = resource_root()
 CONTROL_CAN_DIR = PROJECT_ROOT / "third_party" / "controlcan"
 CONTROL_CAN_X64_DLL = CONTROL_CAN_DIR / "x64" / "ControlCAN.dll"
 CONTROL_CAN_WIN32_DLL = CONTROL_CAN_DIR / "win32" / "ControlCAN.dll"
-

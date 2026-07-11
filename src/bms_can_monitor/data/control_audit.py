@@ -9,6 +9,7 @@ from threading import RLock
 from time import time
 from typing import Mapping
 
+from bms_can_monitor.config import default_control_audit_path
 from bms_can_monitor.protocol.control import ControlCommand
 from bms_can_monitor.protocol.models import CanFrame
 
@@ -18,8 +19,8 @@ class ControlAuditError(RuntimeError):
 
 
 class ControlAuditLog:
-    def __init__(self, path: str | Path = "logs/control-audit.jsonl") -> None:
-        self.path = Path(path)
+    def __init__(self, path: str | Path | None = None) -> None:
+        self.path = Path(path) if path is not None else default_control_audit_path()
         self._lock = RLock()
 
     def write(
