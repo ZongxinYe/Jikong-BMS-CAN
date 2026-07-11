@@ -36,10 +36,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from bms_can_monitor.canio import BusConfig
-from bms_can_monitor.protocol import BmsSnapshot
+from bms_can_monitor.canio import CONTROL_CONFIRMATION_PHRASE, BusConfig
+from bms_can_monitor.protocol import BmsSnapshot, ControlCommand
 
-from .controller import GuiController, GuiStats, RecordingState, SourceState
+from .control_panel import ControlPanel
+from .controller import (
+    ControlSendResult,
+    GuiController,
+    GuiStats,
+    RecordingState,
+    SourceState,
+)
 from .models import (
     CellTableModel,
     EventTableModel,
@@ -75,6 +82,7 @@ QLabel#mutedLabel { color: #667085; }
 QLabel#sourceConnected { color: #13705a; font-weight: 600; }
 QLabel#sourceIdle { color: #667085; }
 QLabel#sourceBusy { color: #8a5a00; font-weight: 600; }
+QLabel#controlWarning { color: #8a2f25; background: #fff4e8; border: 1px solid #e7b98a; border-radius: 3px; padding: 9px; }
 QStatusBar { background: #ffffff; border-top: 1px solid #d8dde5; }
 """
 
@@ -127,6 +135,11 @@ class MainWindow(QMainWindow):
         )
         self.record_action.setToolTip("开始或停止 SQLite 数据记录")
         self.record_action.setCheckable(True)
+        self.control_action = QAction(
+            self._icon(QStyle.StandardPixmap.SP_MessageBoxWarning), "控制锁定", self
+        )
+        self.control_action.setToolTip("启用受保护的 BMS 控制功能")
+        self.control_action.setCheckable(True)
         self.clear_action = QAction(
             self._icon(QStyle.StandardPixmap.SP_TrashIcon), "清空", self
         )
@@ -137,6 +150,7 @@ class MainWindow(QMainWindow):
         self.replay_action.triggered.connect(self._open_replay)
         self.demo_action.triggered.connect(self.controller.start_demo)
         self.record_action.triggered.connect(self._toggle_recording)
+        self.control_action.triggered.connect(self._toggle_control_workspace)
         self.clear_action.triggered.connect(self._clear_data)
 
     def _create_toolbar(self) -> None:
@@ -150,6 +164,7 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self.demo_action)
         toolbar.addSeparator()
         toolbar.addAction(self.record_action)
+        toolbar.addAction(self.control_action)
         toolbar.addAction(self.clear_action)
         self.addToolBar(toolbar)
 
@@ -232,6 +247,7 @@ class MainWindow(QMainWindow):
         self._create_waveform_tab()
         self._create_frames_tab()
         self._create_events_tab()
+        self._create_control_tab()
 
     def _create_dashboard_tab(self) -> None:
         page = QWidget()
@@ -338,6 +354,11 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.event_table)
         self.tabs.addTab(page, "运行事件")
 
+    def _create_control_tab(self) -> None:
+        self.control_panel = ControlPanel()
+        self.control_tab_index = self.tabs.addTab(self.control_panel, "BMS 控制")
+        self.tabs.setTabEnabled(self.control_tab_index, False)
+
     @staticmethod
     def _section_label(text: str) -> QLabel:
         label = QLabel(text)
@@ -378,7 +399,9 @@ class MainWindow(QMainWindow):
         self.controller.source_changed.connect(self._apply_source_state)
         self.controller.recording_changed.connect(self._apply_recording_state)
         self.controller.stats_updated.connect(self._update_stats)
+        self.controller.control_send_finished.connect(self._apply_control_result)
         self.controller.error_raised.connect(self._show_error)
+        self.control_panel.send_requested.connect(self._send_control_command)
 
     def _bus_config(self) -> BusConfig:
         path_text = self.dll_path_edit.text().strip()
@@ -454,6 +477,79 @@ class MainWindow(QMainWindow):
         self.event_model.clear()
         self.controller.reset_data()
 
+    def _toggle_control_workspace(self, checked: bool) -> None:
+        if not checked:
+            self._lock_control_workspace()
+            return
+        if not self.controller.control_ready:
+            self._lock_control_workspace()
+            self._show_error("控制条件不满足：需要默认地址、正常模式和近期 BMS 实时报文")
+            return
+        answer = QMessageBox.warning(
+            self,
+            "启用 BMS 控制",
+            "控制命令会直接改变充电、放电或均衡开关。\n\n"
+            "请确认 CAN 通道、BMS 地址、接线和现场安全条件均正确。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            self._lock_control_workspace()
+            return
+        self.control_panel.set_unlocked(True)
+        self.tabs.setTabEnabled(self.control_tab_index, True)
+        self.control_action.setText("控制已启用")
+        self.tabs.setCurrentIndex(self.control_tab_index)
+
+    def _lock_control_workspace(self) -> None:
+        self.control_panel.set_unlocked(False)
+        self.tabs.setTabEnabled(self.control_tab_index, False)
+        if self.tabs.currentIndex() == self.control_tab_index:
+            self.tabs.setCurrentIndex(0)
+        self.control_action.blockSignals(True)
+        self.control_action.setChecked(False)
+        self.control_action.setText("控制锁定")
+        self.control_action.blockSignals(False)
+
+    def _send_control_command(self, command: ControlCommand) -> None:
+        answer = QMessageBox.warning(
+            self,
+            "确认发送 BMS 控制帧",
+            self.control_panel.summary_text()
+            + "\n\n该操作将立即作用于真实 BMS，是否发送？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            self.control_panel.status_label.setText("发送已取消")
+            return
+        try:
+            authorization = self.controller.authorize_control(
+                command,
+                CONTROL_CONFIRMATION_PHRASE,
+            )
+            self.controller.send_control(command, authorization)
+            self.control_panel.set_pending(True)
+            self.control_action.setEnabled(False)
+        except Exception as exc:
+            self.control_panel.set_result(False, f"发送被拒绝：{exc}")
+            self._show_error(str(exc))
+
+    def _apply_control_result(self, result: ControlSendResult) -> None:
+        self.control_panel.set_result(result.success, result.message)
+        self._refresh_control_availability()
+        if not result.success:
+            self._show_error(result.message)
+
+    def _refresh_control_availability(self) -> None:
+        if self.controller.control_send_pending:
+            self.control_action.setEnabled(False)
+            return
+        ready = self.controller.control_ready
+        self.control_action.setEnabled(ready)
+        if not ready and self.control_action.isChecked():
+            self._lock_control_workspace()
+
     def _pause_frames(self, paused: bool) -> None:
         self.frame_model.paused = paused
 
@@ -480,6 +576,8 @@ class MainWindow(QMainWindow):
         delta = max(cells) - min(cells) if cells else None
         self.delta_metric.set_value(delta, "mV")
         self._update_issues(snapshot)
+        self.control_panel.update_snapshot(snapshot)
+        self._refresh_control_availability()
 
     def _update_issues(self, snapshot: BmsSnapshot) -> None:
         self.issue_list.clear()
@@ -516,6 +614,8 @@ class MainWindow(QMainWindow):
             self.dll_path_edit,
         ):
             widget.setEnabled(idle)
+        self.control_panel.set_device_address(self.controller.current_config.device_address)
+        self._refresh_control_availability()
 
     def _apply_recording_state(self, state: RecordingState) -> None:
         self.record_action.blockSignals(True)
@@ -542,6 +642,7 @@ class MainWindow(QMainWindow):
                 else ""
             )
             self.record_status.setText(f"记录 #{recording.session_id}{queue_text}")
+        self._refresh_control_availability()
 
     def _show_error(self, message: str) -> None:
         QMessageBox.critical(self, "BMS CAN Monitor", message)

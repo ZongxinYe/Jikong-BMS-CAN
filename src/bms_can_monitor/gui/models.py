@@ -242,8 +242,10 @@ class EventTableModel(QAbstractTableModel):
         event = self._rows[index.row()]
         is_error = event.event_type in {
             CanEventType.ADAPTER_ERROR,
+            CanEventType.CONTROL_REJECTED,
             CanEventType.REPLAY_ERROR,
             CanEventType.RX_QUEUE_OVERFLOW,
+            CanEventType.TX_FAILED,
         }
         if role == Qt.ItemDataRole.DisplayRole:
             return (

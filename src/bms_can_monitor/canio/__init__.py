@@ -3,6 +3,12 @@
 from .bus_config import BusConfig
 from .can_worker import CanReceiveWorker, ReceiveWorkerStats
 from .canalyst2_adapter import AdapterState, Canalyst2Adapter, Canalyst2Error
+from .control_safety import (
+    CONTROL_CONFIRMATION_PHRASE,
+    ControlAuthorization,
+    ControlSafetyError,
+    ControlSafetyGate,
+)
 from .device_discovery import DeviceInfo, discover_devices
 from .diagnostics import DiagnosticSnapshot, collect_diagnostics
 from .events import CanEvent, CanEventType
@@ -17,6 +23,10 @@ __all__ = [
     "CanReceiveWorker",
     "Canalyst2Adapter",
     "Canalyst2Error",
+    "CONTROL_CONFIRMATION_PHRASE",
+    "ControlAuthorization",
+    "ControlSafetyError",
+    "ControlSafetyGate",
     "DeviceInfo",
     "DiagnosticSnapshot",
     "ReceiveWorkerStats",

@@ -21,7 +21,9 @@ def test_main_window_builds_and_refreshes_offscreen():
     controller.drain_once(time_budget_ms=100)
     app.processEvents()
 
-    assert window.tabs.count() == 4
+    assert window.tabs.count() == 5
+    assert window.tabs.isTabEnabled(window.control_tab_index) is False
+    assert window.control_action.isChecked() is False
     assert window.signal_model.rowCount() > 0
     assert window.cell_model.rowCount() == 16
     assert window.frame_model.rowCount() > 0

@@ -10,6 +10,7 @@ from .export_csv import (
     export_signals_wide,
     list_sessions,
 )
+from .control_audit import ControlAuditError, ControlAuditLog
 from .pipeline import DataPipeline
 from .ring_buffer import SignalPoint, SignalRingBuffer
 from .recorder import (
@@ -25,6 +26,8 @@ from .state_store import BmsStateStore
 __all__ = [
     "BmsStateStore",
     "DataPipeline",
+    "ControlAuditError",
+    "ControlAuditLog",
     "ExportError",
     "ExportedSessionFiles",
     "RecorderError",

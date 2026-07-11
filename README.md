@@ -13,6 +13,7 @@
 - 支持 CSV 离线回放，并与真实设备统一输出 `CanFrame`。
 - 支持最新 BMS 状态、波形环形缓存、SQLite 后台记录和 CSV 导出。
 - 支持 CANalyst-II 连接、CSV 回放、实时总览、分轨波形、报文筛选和记录控制 GUI。
+- 支持默认锁定、双重确认、单次授权和独立审计的 `Ctrl_INFO` 控制发送。
 - 在不连接硬件的情况下用 PDF 示例帧完成协议测试。
 
 ## 桌面程序
@@ -29,6 +30,8 @@ bms-can-monitor --demo
 ```
 
 也可通过 `bms-can-monitor --replay <CAN帧.csv> --speed 5` 启动离线回放。界面功能、线程边界和真机验收项见 `docs\phase4-gui.md`。
+
+BMS 控制默认锁定，只允许真实 CAN、正常模式、默认地址和近期有报文的场景。MaskCode、双重确认、审计日志及限制见 `docs\phase5-control-safety.md`。
 
 ## 验证
 

@@ -12,21 +12,27 @@ from PySide6.QtCore import QObject, QTimer, Signal
 
 from bms_can_monitor.canio import (
     BusConfig,
+    CONTROL_CONFIRMATION_PHRASE,
     CanEvent,
     CanEventType,
     CanReceiveWorker,
     Canalyst2Adapter,
+    ControlAuthorization,
+    ControlSafetyError,
+    ControlSafetyGate,
     ReplayWorker,
     load_replay_csv,
 )
 from bms_can_monitor.data import (
+    ControlAuditError,
+    ControlAuditLog,
     DataPipeline,
     RecorderError,
     SessionMetadata,
     SessionRecorder,
     SignalRingBuffer,
 )
-from bms_can_monitor.protocol import BmsSnapshot, CanFrame
+from bms_can_monitor.protocol import BmsSnapshot, CanFrame, ControlCommand
 
 from .demo import build_demo_frames
 
@@ -40,6 +46,7 @@ DEFAULT_WAVEFORM_SIGNALS = (
     "MaxCellTemp",
     "MinCellTemp",
 )
+MAX_CONTROL_BMS_AGE_SECONDS = 3.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +76,15 @@ class GuiStats:
     recorder_queue_depth: int
 
 
+@dataclass(frozen=True, slots=True)
+class ControlSendResult:
+    success: bool
+    message: str
+    command: ControlCommand
+    frame: CanFrame
+    adapter_result: int | None = None
+
+
 class GuiController(QObject):
     """Keep worker threads and blocking SDK calls outside the Qt paint path."""
 
@@ -78,6 +94,7 @@ class GuiController(QObject):
     source_changed = Signal(object)
     recording_changed = Signal(object)
     stats_updated = Signal(object)
+    control_send_finished = Signal(object)
     error_raised = Signal(str)
 
     def __init__(
@@ -86,6 +103,7 @@ class GuiController(QObject):
         *,
         frame_queue_size: int = 50_000,
         start_timers: bool = True,
+        control_audit_path: str | Path = "logs/control-audit.jsonl",
     ) -> None:
         super().__init__(parent)
         self.frame_queue: Queue[CanFrame] = Queue(maxsize=frame_queue_size)
@@ -107,6 +125,10 @@ class GuiController(QObject):
         self._source_thread: Thread | None = None
         self._current_config = BusConfig()
         self._recorder: SessionRecorder | None = None
+        self._control_gate = ControlSafetyGate()
+        self._control_audit = ControlAuditLog(control_audit_path)
+        self._control_send_pending = False
+        self._control_thread: Thread | None = None
         self._shutdown_requested = False
         self._demo_step = 0
 
@@ -142,9 +164,25 @@ class GuiController(QObject):
     def current_config(self) -> BusConfig:
         return self._current_config
 
+    @property
+    def control_send_pending(self) -> bool:
+        with self._source_lock:
+            return self._control_send_pending
+
+    @property
+    def control_ready(self) -> bool:
+        try:
+            probe = ControlCommand(mask=1, device_address=self._current_config.device_address)
+            self._require_control_ready(probe)
+        except (ControlSafetyError, ValueError):
+            return False
+        return True
+
     def _set_source_state(self, state: SourceState) -> None:
         with self._source_lock:
             self._source_state = state
+        if state.mode == "idle":
+            self._control_gate.revoke_all()
         self.source_changed.emit(state)
 
     def _enqueue_event(self, event: CanEvent) -> None:
@@ -336,6 +374,198 @@ class GuiController(QObject):
             self._recording_state = RecordingState()
             self.recording_changed.emit(self._recording_state)
 
+    def authorize_control(
+        self,
+        command: ControlCommand,
+        confirmation_phrase: str,
+    ) -> ControlAuthorization:
+        frame: CanFrame | None = None
+        try:
+            self._require_control_ready(command)
+            authorization = self._control_gate.issue(command, confirmation_phrase)
+            frame = command.to_frame(channel=self._current_config.channel)
+            self._control_audit.write(
+                "authorized",
+                command,
+                frame=frame,
+                details=self._control_details(command),
+            )
+        except Exception as exc:
+            self._control_gate.revoke_all()
+            self._record_control_rejection(command, exc)
+            if isinstance(exc, ControlSafetyError):
+                raise
+            raise ControlSafetyError(str(exc)) from exc
+
+        self._enqueue_event(
+            CanEvent(
+                event_type=CanEventType.CONTROL_AUTHORIZED,
+                message="BMS control command explicitly authorized",
+                details=self._control_details(command, frame=frame),
+            )
+        )
+        return authorization
+
+    def send_control(
+        self,
+        command: ControlCommand,
+        authorization: ControlAuthorization | None,
+    ) -> None:
+        pending_reserved = False
+        try:
+            adapter = self._require_control_ready(command)
+            self._control_gate.consume(authorization, command)
+            with self._source_lock:
+                if self._control_send_pending:
+                    raise ControlSafetyError(
+                        "another BMS control command is still pending"
+                    )
+                self._control_send_pending = True
+                pending_reserved = True
+            frame = command.to_frame(channel=self._current_config.channel)
+            self._control_audit.write(
+                "send_requested",
+                command,
+                frame=frame,
+                details=self._control_details(command),
+            )
+        except Exception as exc:
+            if pending_reserved:
+                with self._source_lock:
+                    self._control_send_pending = False
+            self._record_control_rejection(command, exc)
+            if isinstance(exc, ControlSafetyError):
+                raise
+            raise ControlSafetyError(str(exc)) from exc
+        self._enqueue_event(
+            CanEvent(
+                event_type=CanEventType.CONTROL_SEND_REQUESTED,
+                message="BMS control frame queued for transmission",
+                details=self._control_details(command, frame=frame),
+            )
+        )
+        try:
+            self._control_thread = Thread(
+                target=self._send_control_worker,
+                args=(adapter, command, frame),
+                name="gui-bms-control-send",
+                daemon=True,
+            )
+            self._control_thread.start()
+        except Exception:
+            with self._source_lock:
+                self._control_send_pending = False
+            raise
+
+    def _require_control_ready(self, command: ControlCommand) -> Canalyst2Adapter:
+        command.validate_for_send()
+        state = self.source_state
+        if state.mode != "live" or not state.active:
+            raise ControlSafetyError("BMS control requires an active live CAN connection")
+        config = self._current_config
+        if config.mode != 0:
+            raise ControlSafetyError("BMS control is disabled in listen-only or self-test mode")
+        if config.device_address != 0:
+            raise ControlSafetyError(
+                "BMS control is disabled for non-default device addresses until verified"
+            )
+        if command.device_address != config.device_address:
+            raise ControlSafetyError("control target does not match the connected BMS address")
+        with self._source_lock:
+            adapter = self._adapter
+            pending = self._control_send_pending
+        if adapter is None or not adapter.is_started:
+            raise ControlSafetyError("CAN adapter is not ready for transmission")
+        if pending:
+            raise ControlSafetyError("another BMS control command is still pending")
+        snapshot_timestamp = self.pipeline.state_store.timestamp
+        age = time() - snapshot_timestamp
+        if snapshot_timestamp <= 0 or age < 0 or age > MAX_CONTROL_BMS_AGE_SECONDS:
+            raise ControlSafetyError("no recent BMS frame was received for the control target")
+        return adapter
+
+    def _send_control_worker(
+        self,
+        adapter: Canalyst2Adapter,
+        command: ControlCommand,
+        frame: CanFrame,
+    ) -> None:
+        result: int | None = None
+        try:
+            result = adapter.send(frame)
+            if result != 1:
+                raise RuntimeError(f"CAN adapter returned transmit status {result}")
+            event = CanEvent(
+                event_type=CanEventType.TX_SUCCEEDED,
+                message="BMS control frame sent successfully",
+                details=self._control_details(command, frame=frame, result=result),
+            )
+            outcome = ControlSendResult(True, "控制帧发送成功", command, frame, result)
+            self._write_control_outcome("succeeded", command, frame, result=result)
+        except Exception as exc:
+            event = CanEvent(
+                event_type=CanEventType.TX_FAILED,
+                message=f"BMS control frame send failed: {exc}",
+                details=self._control_details(command, frame=frame, error=repr(exc)),
+            )
+            outcome = ControlSendResult(False, f"控制帧发送失败：{exc}", command, frame, result)
+            self._write_control_outcome("failed", command, frame, error=repr(exc))
+        finally:
+            with self._source_lock:
+                self._control_send_pending = False
+        self._enqueue_event(event)
+        self.control_send_finished.emit(outcome)
+
+    def _write_control_outcome(
+        self,
+        stage: str,
+        command: ControlCommand,
+        frame: CanFrame,
+        **details: object,
+    ) -> None:
+        try:
+            self._control_audit.write(stage, command, frame=frame, details=details)
+        except ControlAuditError as exc:
+            self.error_raised.emit(str(exc))
+
+    def _record_control_rejection(self, command: ControlCommand, error: Exception) -> None:
+        details = self._control_details(command, error=repr(error))
+        try:
+            self._control_audit.write("rejected", command, details=details)
+        except ControlAuditError as audit_error:
+            self.error_raised.emit(str(audit_error))
+        self._enqueue_event(
+            CanEvent(
+                event_type=CanEventType.CONTROL_REJECTED,
+                message=f"BMS control command rejected: {error}",
+                details=details,
+            )
+        )
+
+    @staticmethod
+    def _control_details(
+        command: ControlCommand,
+        *,
+        frame: CanFrame | None = None,
+        **extra: object,
+    ) -> dict[str, object]:
+        details: dict[str, object] = {
+            "device_address": command.device_address,
+            "mask": int(command.mask),
+            "charge_on": command.charge_on,
+            "discharge_on": command.discharge_on,
+            "balance_on": command.balance_on,
+            "selected_changes": command.selected_changes,
+        }
+        if frame is not None:
+            details.update(
+                can_id=frame.can_id,
+                data=frame.data.hex(" ").upper(),
+                channel=frame.channel,
+            )
+        details.update(extra)
+        return details
+
     def set_waveform_signals(self, names: list[str] | tuple[str, ...]) -> None:
         self.pipeline.ring_buffer.select(names, retain_existing=True)
 
@@ -484,6 +714,9 @@ class GuiController(QObject):
         self._drain_timer.stop()
         self._stats_timer.stop()
         self._demo_timer.stop()
+        self._control_gate.revoke_all()
+        if self._control_thread is not None:
+            self._control_thread.join(2.0)
         self._stop_source_blocking()
         try:
             self.stop_recording()
