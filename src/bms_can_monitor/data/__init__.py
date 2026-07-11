@@ -3,7 +3,6 @@
 from .export_csv import (
     ExportError,
     ExportedSessionFiles,
-    SessionSummary,
     export_events,
     export_raw_frames,
     export_session,
@@ -21,6 +20,12 @@ from .recorder import (
     SessionMetadata,
     SessionRecorder,
 )
+from .recording_reader import (
+    RecordingReadError,
+    RecordingReader,
+    SessionSummary,
+    SqliteReplaySource,
+)
 from .state_store import BmsStateStore
 
 __all__ = [
@@ -36,9 +41,12 @@ __all__ = [
     "RecorderQueueFull",
     "RecorderStats",
     "RecorderWriteError",
+    "RecordingReadError",
+    "RecordingReader",
     "SessionMetadata",
     "SessionRecorder",
     "SessionSummary",
+    "SqliteReplaySource",
     "SignalPoint",
     "SignalRingBuffer",
     "export_events",

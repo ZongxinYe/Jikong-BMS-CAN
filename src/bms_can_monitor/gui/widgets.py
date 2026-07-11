@@ -63,6 +63,7 @@ class MetricDisplay(QFrame):
         super().__init__(parent)
         self.setObjectName("metricDisplay")
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setMinimumHeight(92)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 8, 12, 8)
         layout.setSpacing(1)
@@ -81,6 +82,65 @@ class MetricDisplay(QFrame):
         else:
             text = str(value)
         self.value_label.setText(f"{text} {unit}".rstrip())
+
+
+class RangeMetricDisplay(QFrame):
+    """Metric card with a primary value and compact high/low details."""
+
+    def __init__(self, title: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("metricDisplay")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setMinimumHeight(92)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 7, 12, 7)
+        layout.setSpacing(1)
+        self.title_label = QLabel(title)
+        self.title_label.setObjectName("metricTitle")
+        self.value_label = QLabel("--")
+        self.value_label.setObjectName("metricValue")
+        details = QHBoxLayout()
+        details.setSpacing(12)
+        self.high_value_label = QLabel("最高 --")
+        self.high_value_label.setObjectName("metricDetail")
+        self.low_value_label = QLabel("最低 --")
+        self.low_value_label.setObjectName("metricDetail")
+        details.addWidget(self.high_value_label)
+        details.addWidget(self.low_value_label)
+        details.addStretch(1)
+        layout.addWidget(self.title_label)
+        layout.addWidget(self.value_label)
+        layout.addLayout(details)
+
+    def set_values(
+        self,
+        primary: object | None,
+        primary_unit: str,
+        *,
+        high_text: str = "最高 --",
+        low_text: str = "最低 --",
+        high_color: str | None = None,
+        low_color: str | None = None,
+    ) -> None:
+        self.value_label.setText(_metric_text(primary, primary_unit))
+        self.high_value_label.setText(high_text)
+        self.low_value_label.setText(low_text)
+        self.high_value_label.setStyleSheet(
+            f"color: {high_color}; font-weight: 600;" if high_color else ""
+        )
+        self.low_value_label.setStyleSheet(
+            f"color: {low_color}; font-weight: 600;" if low_color else ""
+        )
+
+
+def _metric_text(value: object | None, unit: str = "") -> str:
+    if value is None:
+        return "--"
+    elif isinstance(value, float):
+        text = f"{value:.2f}".rstrip("0").rstrip(".")
+    else:
+        text = str(value)
+    return f"{text} {unit}".rstrip()
 
 
 class WaveformPanel(QWidget):

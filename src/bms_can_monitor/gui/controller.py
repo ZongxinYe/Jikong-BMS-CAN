@@ -28,9 +28,13 @@ from bms_can_monitor.data import (
     ControlAuditLog,
     DataPipeline,
     RecorderError,
+    RecordingReadError,
+    RecordingReader,
     SessionMetadata,
+    SessionSummary,
     SessionRecorder,
     SignalRingBuffer,
+    SqliteReplaySource,
 )
 from bms_can_monitor.protocol import BmsSnapshot, CanFrame, ControlCommand
 
@@ -47,6 +51,17 @@ DEFAULT_WAVEFORM_SIGNALS = (
     "MinCellTemp",
 )
 MAX_CONTROL_BMS_AGE_SECONDS = 3.0
+SQLITE_REPLAY_SUFFIXES = {".sqlite3", ".sqlite", ".db"}
+
+
+class DbcMismatchError(RuntimeError):
+    def __init__(self, recorded_hash: str, current_hash: str) -> None:
+        self.recorded_hash = recorded_hash
+        self.current_hash = current_hash
+        super().__init__(
+            "recording DBC hash differs from the current DBC; replay would use "
+            "the current protocol definition"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +139,7 @@ class GuiController(QObject):
         self._adapter: Canalyst2Adapter | None = None
         self._receive_worker: CanReceiveWorker | None = None
         self._replay_worker: ReplayWorker | None = None
+        self._replay_database_path: Path | None = None
         self._source_thread: Thread | None = None
         self._current_config = BusConfig()
         self._recorder: SessionRecorder | None = None
@@ -244,13 +260,63 @@ class GuiController(QObject):
             self._set_source_state(SourceState())
             self.error_raised.emit(f"CANalyst-II 连接失败：{exc}")
 
-    def start_replay(self, path: str | Path, *, speed: float = 1.0, loop: bool = False) -> None:
+    @property
+    def current_dbc_sha256(self) -> str:
+        return self.pipeline.address_resolver.dbc.content_sha256
+
+    @staticmethod
+    def recording_sessions(path: str | Path) -> tuple[SessionSummary, ...]:
+        return RecordingReader(path).list_sessions()
+
+    def start_replay(
+        self,
+        path: str | Path,
+        *,
+        speed: float = 1.0,
+        loop: bool = False,
+        session_id: int | None = None,
+        allow_dbc_mismatch: bool = False,
+    ) -> None:
         if self.source_state.mode != "idle":
             raise RuntimeError("请先停止当前数据源")
         replay_path = Path(path)
+        sqlite_source: SqliteReplaySource | None = None
+        if replay_path.suffix.lower() in SQLITE_REPLAY_SUFFIXES:
+            reader = RecordingReader(replay_path)
+            sessions = reader.list_sessions()
+            if not sessions:
+                raise RecordingReadError("recording database contains no sessions")
+            selected_id = (
+                sessions[-1].session_id if session_id is None else session_id
+            )
+            sqlite_source = SqliteReplaySource(replay_path, selected_id)
+            recorded_hash = sqlite_source.summary.dbc_sha256
+            current_hash = self.current_dbc_sha256
+            if (
+                recorded_hash
+                and recorded_hash != current_hash
+                and not allow_dbc_mismatch
+            ):
+                raise DbcMismatchError(recorded_hash, current_hash)
+            if (
+                self._recording_state.database_path is not None
+                and self._recording_state.database_path.resolve()
+                == replay_path.resolve()
+            ):
+                raise RuntimeError("cannot replay the database currently being recorded")
         self._set_source_state(
             SourceState("replay", "正在加载回放文件", busy=True, detail=str(replay_path))
         )
+        if sqlite_source is not None:
+            self._replay_database_path = replay_path.resolve()
+            self._source_thread = Thread(
+                target=self._start_replay_source_worker,
+                args=(sqlite_source, replay_path.name, speed, loop),
+                name="gui-load-sqlite-replay",
+                daemon=True,
+            )
+            self._source_thread.start()
+            return
         self._source_thread = Thread(
             target=self._start_replay_worker,
             args=(replay_path, speed, loop),
@@ -275,10 +341,26 @@ class GuiController(QObject):
     def _start_replay_worker(self, path: Path, speed: float, loop: bool) -> None:
         try:
             frames = load_replay_csv(path)
+            self._start_replay_source_worker(frames, path.name, speed, loop)
+        except Exception as exc:
+            with self._source_lock:
+                self._replay_worker = None
+            self._replay_database_path = None
+            self._set_source_state(SourceState())
+            self.error_raised.emit(f"回放文件加载失败：{exc}")
+
+    def _start_replay_source_worker(
+        self,
+        source,
+        source_name: str,
+        speed: float,
+        loop: bool,
+    ) -> None:
+        try:
             if self._shutdown_requested:
                 return
             worker = ReplayWorker(
-                frames,
+                source,
                 self.frame_queue,
                 speed=speed,
                 loop=loop,
@@ -292,12 +374,16 @@ class GuiController(QObject):
                     "replay",
                     "离线回放中",
                     active=True,
-                    detail=f"{path.name} / {len(frames)} 帧 / {speed:g}x",
+                    detail=(
+                        f"{source_name} / {worker.source.frame_count} 帧 / "
+                        f"{speed:g}x"
+                    ),
                 )
             )
         except Exception as exc:
             with self._source_lock:
                 self._replay_worker = None
+            self._replay_database_path = None
             self._set_source_state(SourceState())
             self.error_raised.emit(f"回放文件加载失败：{exc}")
 
@@ -336,6 +422,7 @@ class GuiController(QObject):
             self._receive_worker = None
             self._replay_worker = None
             self._adapter = None
+        self._replay_database_path = None
         self._set_source_state(SourceState())
 
     def start_recording(
@@ -347,6 +434,11 @@ class GuiController(QObject):
         if self._recorder is not None:
             raise RuntimeError("当前已经在记录")
         path = Path(database_path)
+        if (
+            self._replay_database_path is not None
+            and path.resolve() == self._replay_database_path
+        ):
+            raise RuntimeError("cannot record into the database currently being replayed")
         config = self._current_config
         recorder = SessionRecorder(path)
         session_id = recorder.start(
@@ -357,6 +449,8 @@ class GuiController(QObject):
                 bitrate=config.bitrate,
                 device_address=config.device_address,
                 note=note,
+                detected_addresses=self.pipeline.detected_addresses,
+                dbc_sha256=self.current_dbc_sha256,
             )
         )
         self._recorder = recorder
@@ -372,7 +466,7 @@ class GuiController(QObject):
         self.pipeline.recorder = None
         self._recorder = None
         try:
-            recorder.stop()
+            recorder.stop(detected_addresses=self.pipeline.detected_addresses)
         finally:
             self._recording_state = RecordingState()
             self.recording_changed.emit(self._recording_state)
@@ -618,12 +712,13 @@ class GuiController(QObject):
             }:
                 with self._source_lock:
                     self._replay_worker = None
+                self._replay_database_path = None
                 self._set_source_state(SourceState())
         if events:
             self.events_received.emit(events)
 
         started = monotonic()
-        processed: list[tuple[CanFrame, str]] = []
+        processed: list[tuple[CanFrame, str, int | None]] = []
         changed_addresses: set[int] = set()
         while len(processed) < frame_limit:
             if (monotonic() - started) * 1000.0 >= time_budget_ms:
@@ -640,7 +735,13 @@ class GuiController(QObject):
             except Exception as exc:
                 self.error_raised.emit(f"处理 CAN 帧失败：{exc}")
                 message = None
-            processed.append((frame, "" if message is None else message.name))
+            processed.append(
+                (
+                    frame,
+                    "" if message is None else message.name,
+                    None if message is None else message.device_address,
+                )
+            )
             if message is not None:
                 self._decoded_frames += 1
                 changed_addresses.add(message.device_address)

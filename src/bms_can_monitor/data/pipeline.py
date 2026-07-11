@@ -177,8 +177,6 @@ class DataPipeline:
         with self._context_lock:
             self._detected_addresses.add(resolved.device_address)
         self.ring_buffer.append_message(message)
-        if self.recorder is not None:
-            self.recorder.record_message(message)
         return message
 
     def process_event(self, event: CanEvent) -> None:

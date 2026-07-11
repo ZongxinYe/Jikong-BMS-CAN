@@ -13,7 +13,7 @@ from bms_can_monitor.data import (
     export_signals_wide,
     list_sessions,
 )
-from bms_can_monitor.protocol import CanFrame, JikongBmsDecoder
+from bms_can_monitor.protocol import CanFrame
 
 
 def create_recording(tmp_path):
@@ -22,7 +22,6 @@ def create_recording(tmp_path):
     session_id = recorder.start(
         SessionMetadata(started_at=10.0, note="导出测试")
     )
-    decoder = JikongBmsDecoder()
     status_frame = CanFrame(
         0x02F4,
         bytes.fromhex("13 01 D7 11 33"),
@@ -37,7 +36,6 @@ def create_recording(tmp_path):
     )
     for frame in (status_frame, temp_frame):
         recorder.record_frame(frame)
-        recorder.record_message(decoder.decode(frame))
     recorder.record_event_data(
         "alarm",
         "温度告警",
@@ -84,6 +82,31 @@ def test_signal_wide_export_forward_fills_latest_values(tmp_path):
         "SOC": "51",
         "MaxCellTemp": "22",
     }
+
+
+def test_signal_export_decodes_only_requested_bms_address(tmp_path):
+    database = tmp_path / "multi.sqlite3"
+    recorder = SessionRecorder(database)
+    session_id = recorder.start(SessionMetadata(started_at=1.0))
+    recorder.record_frame(
+        CanFrame(0x02F4, bytes.fromhex("13 01 D7 11 33"), timestamp=2.0)
+    )
+    recorder.record_frame(
+        CanFrame(0x02F5, bytes.fromhex("64 00 A0 0F 22"), timestamp=3.0)
+    )
+    recorder.stop(detected_addresses=(0, 1))
+
+    output = export_signals_wide(
+        database,
+        tmp_path / "bms1.csv",
+        session_id,
+        signal_names=("BattVolt", "SOC"),
+        device_address=1,
+    )
+
+    assert read_csv(output) == [
+        {"timestamp": "3.000000000", "BattVolt": "10", "SOC": "34"}
+    ]
 
 
 def test_event_and_session_exports_preserve_unicode(tmp_path):

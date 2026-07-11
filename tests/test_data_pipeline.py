@@ -14,6 +14,13 @@ def count_rows(database, table):
         return connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
 
 
+def table_exists(database, table):
+    with sqlite3.connect(database) as connection:
+        return connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone() is not None
+
+
 def test_pipeline_updates_state_waveform_and_recorder(tmp_path):
     database = tmp_path / "pipeline.sqlite3"
     recorder = SessionRecorder(database, flush_interval=0.01)
@@ -36,7 +43,7 @@ def test_pipeline_updates_state_waveform_and_recorder(tmp_path):
     pipeline.flush()
     recorder.stop()
     assert count_rows(database, "raw_frames") == 1
-    assert count_rows(database, "signal_samples") == 3
+    assert table_exists(database, "signal_samples") is False
 
 
 def test_pipeline_records_unknown_frame_without_interrupting(tmp_path):
@@ -48,7 +55,7 @@ def test_pipeline_records_unknown_frame_without_interrupting(tmp_path):
     assert pipeline.decode_errors == 1
     recorder.stop()
     assert count_rows(database, "raw_frames") == 1
-    assert count_rows(database, "signal_samples") == 0
+    assert table_exists(database, "signal_samples") is False
 
 
 def test_pipeline_assembles_cell_voltage_state(tmp_path):

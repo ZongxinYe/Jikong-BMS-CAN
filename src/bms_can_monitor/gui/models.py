@@ -18,18 +18,29 @@ def _time_text(timestamp: float) -> str:
 
 
 class FrameTableModel(QAbstractTableModel):
-    HEADERS = ("时间", "通道", "CAN ID", "帧格式", "类型", "DLC", "数据", "报文", "来源")
+    HEADERS = (
+        "时间",
+        "通道",
+        "CAN ID",
+        "帧格式",
+        "类型",
+        "DLC",
+        "数据",
+        "报文",
+        "BMS",
+        "来源",
+    )
 
     def __init__(self, parent=None, *, max_rows: int = 20_000) -> None:
         super().__init__(parent)
         if max_rows < 1:
             raise ValueError("max_rows must be positive")
         self.max_rows = max_rows
-        self._rows: list[tuple[CanFrame, str]] = []
+        self._rows: list[tuple[CanFrame, str, int | None]] = []
         self.paused = False
 
     @property
-    def rows(self) -> tuple[tuple[CanFrame, str], ...]:
+    def rows(self) -> tuple[tuple[CanFrame, str, int | None], ...]:
         return tuple(self._rows)
 
     def rowCount(self, parent=QModelIndex()) -> int:  # noqa: N802
@@ -46,7 +57,7 @@ class FrameTableModel(QAbstractTableModel):
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
             return None
-        frame, message_name = self._rows[index.row()]
+        frame, message_name, device_address = self._rows[index.row()]
         column = index.column()
         if role == Qt.ItemDataRole.DisplayRole:
             values = (
@@ -58,10 +69,11 @@ class FrameTableModel(QAbstractTableModel):
                 str(frame.dlc),
                 frame.data.hex(" ").upper(),
                 message_name or "未解析",
+                "--" if device_address is None else str(device_address),
                 frame.source,
             )
             return values[column]
-        if role == Qt.ItemDataRole.TextAlignmentRole and column in {1, 2, 5}:
+        if role == Qt.ItemDataRole.TextAlignmentRole and column in {1, 2, 5, 8}:
             return int(Qt.AlignmentFlag.AlignCenter)
         if role == Qt.ItemDataRole.ForegroundRole and not message_name:
             return QColor("#8a5a00")
@@ -69,10 +81,19 @@ class FrameTableModel(QAbstractTableModel):
             return frame
         return None
 
-    def append_batch(self, rows: list[tuple[CanFrame, str]]) -> None:
+    def append_batch(
+        self,
+        rows: list[
+            tuple[CanFrame, str] | tuple[CanFrame, str, int | None]
+        ],
+    ) -> None:
         if self.paused or not rows:
             return
-        combined = self._rows + list(rows)
+        normalized = [
+            (row[0], row[1], None) if len(row) == 2 else row
+            for row in rows
+        ]
+        combined = self._rows + normalized
         if len(combined) > self.max_rows:
             self.beginResetModel()
             self._rows = combined[-self.max_rows :]
@@ -80,7 +101,7 @@ class FrameTableModel(QAbstractTableModel):
             return
         first = len(self._rows)
         self.beginInsertRows(QModelIndex(), first, first + len(rows) - 1)
-        self._rows.extend(rows)
+        self._rows.extend(normalized)
         self.endInsertRows()
 
     def clear(self) -> None:

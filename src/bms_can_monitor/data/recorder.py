@@ -1,4 +1,4 @@
-"""Background SQLite session recorder for frames, signals, and events."""
+"""Background SQLite recorder for raw CAN frames and operational events."""
 
 from __future__ import annotations
 
@@ -10,12 +10,14 @@ from pathlib import Path
 from queue import Empty, Full, Queue
 from threading import Event, RLock, Thread
 from time import monotonic, time
-from typing import Mapping
+from typing import Iterable, Mapping
 
 from bms_can_monitor.canio.events import CanEvent
-from bms_can_monitor.protocol.models import CanFrame, DecodedMessage, SignalValue
+from bms_can_monitor.protocol.models import CanFrame, DecodedMessage
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+STORAGE_MODE_RAW_ONLY = "raw_only"
+STORAGE_MODE_LEGACY_SIGNALS = "legacy_signals"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -28,7 +30,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     bitrate INTEGER NOT NULL,
     device_address INTEGER NOT NULL,
     protocol_version TEXT NOT NULL,
-    note TEXT NOT NULL DEFAULT ''
+    note TEXT NOT NULL DEFAULT '',
+    storage_mode TEXT NOT NULL DEFAULT 'raw_only',
+    detected_addresses_json TEXT NOT NULL DEFAULT '[]',
+    dbc_sha256 TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS raw_frames (
@@ -45,19 +50,6 @@ CREATE TABLE IF NOT EXISTS raw_frames (
     source TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS signal_samples (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    timestamp REAL NOT NULL,
-    message_name TEXT NOT NULL,
-    signal_name TEXT NOT NULL,
-    value_real REAL,
-    value_text TEXT,
-    raw_value_real REAL,
-    unit TEXT,
-    source_frame_id INTEGER NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -69,10 +61,6 @@ CREATE TABLE IF NOT EXISTS events (
 
 CREATE INDEX IF NOT EXISTS idx_raw_frames_session_time
     ON raw_frames(session_id, timestamp, id);
-CREATE INDEX IF NOT EXISTS idx_signal_samples_session_time
-    ON signal_samples(session_id, timestamp, id);
-CREATE INDEX IF NOT EXISTS idx_signal_samples_session_name_time
-    ON signal_samples(session_id, signal_name, timestamp, id);
 CREATE INDEX IF NOT EXISTS idx_events_session_time
     ON events(session_id, timestamp, id);
 """
@@ -100,6 +88,25 @@ class SessionMetadata:
     device_address: int = 0
     protocol_version: str = "Jikong BMS CAN V2.1"
     note: str = ""
+    storage_mode: str = STORAGE_MODE_RAW_ONLY
+    detected_addresses: tuple[int, ...] = ()
+    dbc_sha256: str = ""
+
+    def __post_init__(self) -> None:
+        if self.storage_mode != STORAGE_MODE_RAW_ONLY:
+            raise ValueError("new recorder sessions must use raw_only storage")
+        addresses = tuple(sorted({int(value) for value in self.detected_addresses}))
+        if any(not 0 <= value <= 0x0B for value in addresses):
+            raise ValueError("detected BMS addresses must be 0..11")
+        object.__setattr__(self, "detected_addresses", addresses)
+        if self.dbc_sha256 and (
+            len(self.dbc_sha256) != 64
+            or any(
+                character not in "0123456789abcdefABCDEF"
+                for character in self.dbc_sha256
+            )
+        ):
+            raise ValueError("DBC SHA-256 must contain 64 hexadecimal characters")
 
     def with_start_time(self) -> SessionMetadata:
         if self.started_at > 0:
@@ -113,6 +120,9 @@ class SessionMetadata:
             device_address=self.device_address,
             protocol_version=self.protocol_version,
             note=self.note,
+            storage_mode=self.storage_mode,
+            detected_addresses=self.detected_addresses,
+            dbc_sha256=self.dbc_sha256,
         )
 
 
@@ -131,11 +141,6 @@ class _FrameItem:
 
 
 @dataclass(frozen=True, slots=True)
-class _SignalsItem:
-    values: tuple[tuple[object, ...], ...]
-
-
-@dataclass(frozen=True, slots=True)
 class _EventItem:
     values: tuple[object, ...]
 
@@ -150,7 +155,7 @@ class _StopItem:
     completed: Event
 
 
-RecordItem = _FrameItem | _SignalsItem | _EventItem | _FlushItem | _StopItem
+RecordItem = _FrameItem | _EventItem | _FlushItem | _StopItem
 
 
 class SessionRecorder:
@@ -180,7 +185,6 @@ class SessionRecorder:
         self._session_id: int | None = None
         self._writer_error: BaseException | None = None
         self._frames_written = 0
-        self._signals_written = 0
         self._events_written = 0
         self._dropped_items = 0
 
@@ -197,7 +201,7 @@ class SessionRecorder:
         with self._state_lock:
             return RecorderStats(
                 frames_written=self._frames_written,
-                signals_written=self._signals_written,
+                signals_written=0,
                 events_written=self._events_written,
                 dropped_items=self._dropped_items,
                 queued_items=self._queue.qsize(),
@@ -215,8 +219,9 @@ class SessionRecorder:
                     """
                     INSERT INTO sessions (
                         started_at, device_type, device_index, channel, bitrate,
-                        device_address, protocol_version, note
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        device_address, protocol_version, note, storage_mode,
+                        detected_addresses_json, dbc_sha256
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         session.started_at,
@@ -227,6 +232,9 @@ class SessionRecorder:
                         session.device_address,
                         session.protocol_version,
                         session.note,
+                        session.storage_mode,
+                        json.dumps(session.detected_addresses),
+                        session.dbc_sha256.lower(),
                     ),
                 )
                 connection.commit()
@@ -266,22 +274,10 @@ class SessionRecorder:
         )
 
     def record_message(self, message: DecodedMessage) -> None:
-        session_id = self._require_ready()
-        rows = tuple(
-            (
-                session_id,
-                signal.timestamp,
-                message.name,
-                signal.name,
-                *_split_value(signal.value),
-                float(signal.raw_value) if signal.raw_value is not None else None,
-                signal.unit,
-                signal.source_frame_id,
-            )
-            for signal in message.signals
-        )
-        if rows:
-            self._enqueue(_SignalsItem(rows))
+        """Compatibility no-op; schema v2 derives signals from raw frames."""
+
+        del message
+        self._require_ready()
 
     def record_event(self, event: CanEvent) -> None:
         event_type = (
@@ -346,7 +342,19 @@ class SessionRecorder:
             raise RecorderWriteError("recorder flush timed out")
         self._raise_writer_error()
 
-    def stop(self, *, ended_at: float | None = None, timeout: float = 10.0) -> None:
+    def stop(
+        self,
+        *,
+        ended_at: float | None = None,
+        detected_addresses: Iterable[int] | None = None,
+        timeout: float = 10.0,
+    ) -> None:
+        addresses_json: str | None = None
+        if detected_addresses is not None:
+            addresses = tuple(sorted({int(value) for value in detected_addresses}))
+            if any(not 0 <= value <= 0x0B for value in addresses):
+                raise ValueError("detected BMS addresses must be 0..11")
+            addresses_json = json.dumps(addresses)
         with self._state_lock:
             if not self._running:
                 self._raise_writer_error()
@@ -367,8 +375,17 @@ class SessionRecorder:
         session_id = self._require_session_id()
         with self._connect() as connection:
             connection.execute(
-                "UPDATE sessions SET ended_at = ? WHERE id = ?",
-                (time() if ended_at is None else ended_at, session_id),
+                """
+                UPDATE sessions
+                SET ended_at = ?,
+                    detected_addresses_json = COALESCE(?, detected_addresses_json)
+                WHERE id = ?
+                """,
+                (
+                    time() if ended_at is None else ended_at,
+                    addresses_json,
+                    session_id,
+                ),
             )
             connection.commit()
         with self._state_lock:
@@ -437,19 +454,6 @@ class SessionRecorder:
             with self._state_lock:
                 self._frames_written += 1
             return 1
-        if isinstance(item, _SignalsItem):
-            connection.executemany(
-                """
-                INSERT INTO signal_samples (
-                    session_id, timestamp, message_name, signal_name,
-                    value_real, value_text, raw_value_real, unit, source_frame_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                item.values,
-            )
-            with self._state_lock:
-                self._signals_written += len(item.values)
-            return len(item.values)
         if isinstance(item, _EventItem):
             connection.execute(
                 """
@@ -508,16 +512,52 @@ class SessionRecorder:
 
 
 def initialize_schema(connection: sqlite3.Connection) -> None:
+    version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+    if version > SCHEMA_VERSION:
+        raise RecorderError(
+            f"recording schema version {version} is newer than supported version "
+            f"{SCHEMA_VERSION}"
+        )
+    legacy_signals = version < SCHEMA_VERSION and _table_exists(
+        connection, "signal_samples"
+    )
     connection.executescript(SCHEMA_SQL)
+    existing_columns = {
+        str(row[1]) for row in connection.execute("PRAGMA table_info(sessions)")
+    }
+    additions = {
+        "storage_mode": "TEXT NOT NULL DEFAULT 'raw_only'",
+        "detected_addresses_json": "TEXT NOT NULL DEFAULT '[]'",
+        "dbc_sha256": "TEXT NOT NULL DEFAULT ''",
+    }
+    for name, definition in additions.items():
+        if name not in existing_columns:
+            connection.execute(
+                f"ALTER TABLE sessions ADD COLUMN {name} {definition}"
+            )
+    if legacy_signals:
+        connection.execute(
+            "UPDATE sessions SET storage_mode = ?",
+            (STORAGE_MODE_LEGACY_SIGNALS,),
+        )
+        rows = connection.execute(
+            "SELECT id, device_address FROM sessions"
+        ).fetchall()
+        connection.executemany(
+            "UPDATE sessions SET detected_addresses_json = ? WHERE id = ?",
+            (
+                (json.dumps([int(address)]), int(session_id))
+                for session_id, address in rows
+            ),
+        )
     connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 
-def _split_value(value: SignalValue) -> tuple[float | None, str | None]:
-    if value is None:
-        return None, None
-    if isinstance(value, str):
-        return None, value
-    return float(value), None
+def _table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
+    return connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone() is not None
 
 
 def _json_default(value: object) -> object:
