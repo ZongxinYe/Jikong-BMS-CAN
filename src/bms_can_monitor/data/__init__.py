@@ -3,7 +3,6 @@
 from .export_csv import (
     ExportError,
     ExportedSessionFiles,
-    SessionSummary,
     export_events,
     export_raw_frames,
     export_session,
@@ -11,8 +10,8 @@ from .export_csv import (
     list_sessions,
 )
 from .control_audit import ControlAuditError, ControlAuditLog
-from .pipeline import DataPipeline
-from .ring_buffer import SignalPoint, SignalRingBuffer
+from .pipeline import BmsContext, DataPipeline
+from .ring_buffer import BmsSignalKey, SignalPoint, SignalRingBuffer
 from .recorder import (
     RecorderError,
     RecorderQueueFull,
@@ -21,10 +20,18 @@ from .recorder import (
     SessionMetadata,
     SessionRecorder,
 )
+from .recording_reader import (
+    RecordingReadError,
+    RecordingReader,
+    SessionSummary,
+    SqliteReplaySource,
+)
 from .state_store import BmsStateStore
 
 __all__ = [
     "BmsStateStore",
+    "BmsContext",
+    "BmsSignalKey",
     "DataPipeline",
     "ControlAuditError",
     "ControlAuditLog",
@@ -34,9 +41,12 @@ __all__ = [
     "RecorderQueueFull",
     "RecorderStats",
     "RecorderWriteError",
+    "RecordingReadError",
+    "RecordingReader",
     "SessionMetadata",
     "SessionRecorder",
     "SessionSummary",
+    "SqliteReplaySource",
     "SignalPoint",
     "SignalRingBuffer",
     "export_events",

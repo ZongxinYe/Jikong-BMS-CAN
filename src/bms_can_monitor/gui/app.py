@@ -20,10 +20,24 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Jikong BMS CAN desktop monitor")
     source = parser.add_mutually_exclusive_group()
     source.add_argument("--demo", action="store_true", help="start the local BMS demo")
-    source.add_argument("--replay", type=Path, help="start replaying a CAN frame CSV")
+    source.add_argument(
+        "--replay",
+        type=Path,
+        help="start replaying a CAN frame CSV or SQLite recording",
+    )
     source.add_argument("--smoke-test", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--speed", type=float, default=1.0, help="replay speed multiplier")
     parser.add_argument("--loop", action="store_true", help="loop replay input")
+    parser.add_argument(
+        "--session",
+        type=int,
+        help="SQLite recording session ID; defaults to the latest session",
+    )
+    parser.add_argument(
+        "--allow-dbc-mismatch",
+        action="store_true",
+        help="replay SQLite data with the current DBC when its hash differs",
+    )
     return parser
 
 
@@ -65,7 +79,13 @@ def create_application(argv: list[str] | None = None) -> tuple[QApplication, Mai
     if args.demo or args.smoke_test:
         controller.start_demo()
     elif args.replay is not None:
-        controller.start_replay(args.replay, speed=args.speed, loop=args.loop)
+        controller.start_replay(
+            args.replay,
+            speed=args.speed,
+            loop=args.loop,
+            session_id=args.session,
+            allow_dbc_mismatch=args.allow_dbc_mismatch,
+        )
     return app, window
 
 

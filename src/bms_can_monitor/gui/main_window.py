@@ -15,18 +15,14 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QFrame,
-    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QPushButton,
     QSpinBox,
-    QSplitter,
     QStyle,
     QTabWidget,
     QTableView,
@@ -40,22 +36,24 @@ from bms_can_monitor.canio import CONTROL_CONFIRMATION_PHRASE, BusConfig
 from bms_can_monitor.config import records_directory, user_data_directory
 from bms_can_monitor.protocol import BmsSnapshot, ControlCommand
 
+from .bms_dashboard import BmsDashboard
 from .control_panel import ControlPanel
 from .controller import (
     ControlSendResult,
+    DbcMismatchError,
     GuiController,
     GuiStats,
     RecordingState,
     SourceState,
+    SQLITE_REPLAY_SUFFIXES,
 )
 from .models import (
-    CellTableModel,
     EventTableModel,
     FrameFilterProxyModel,
     FrameTableModel,
-    SignalTableModel,
 )
-from .widgets import MetricDisplay, WaveformPanel
+from .widgets import WaveformPanel
+from .replay_dialog import ReplaySessionDialog
 
 
 APP_STYLE = """
@@ -78,6 +76,7 @@ QHeaderView::section { background: #eef1f4; border: 0; border-right: 1px solid #
 QFrame#metricDisplay { background: #ffffff; border: 1px solid #d8dde5; border-radius: 4px; }
 QLabel#metricTitle { color: #667085; font-size: 11px; }
 QLabel#metricValue { color: #17212b; font-size: 20px; font-weight: 600; }
+QLabel#metricDetail { color: #667085; font-size: 10px; }
 QLabel#sectionTitle { color: #344054; font-weight: 600; padding: 2px 0; }
 QLabel#mutedLabel { color: #667085; }
 QLabel#sourceConnected { color: #13705a; font-weight: 600; }
@@ -220,7 +219,7 @@ class MainWindow(QMainWindow):
         form.addRow("设备号", self.device_index_spin)
         form.addRow("通道", self.channel_combo)
         form.addRow("波特率", self.bitrate_combo)
-        form.addRow("BMS 地址", self.address_spin)
+        form.addRow("控制地址", self.address_spin)
         form.addRow("工作模式", self.mode_combo)
         form.addRow("驱动库", dll_row)
         root.addLayout(form)
@@ -254,63 +253,13 @@ class MainWindow(QMainWindow):
     def _create_dashboard_tab(self) -> None:
         page = QWidget()
         root = QVBoxLayout(page)
-        root.setContentsMargins(10, 10, 10, 10)
-        root.setSpacing(8)
-        metrics = QGridLayout()
-        metrics.setSpacing(7)
-        self.voltage_metric = MetricDisplay("电池总压")
-        self.current_metric = MetricDisplay("电池电流")
-        self.soc_metric = MetricDisplay("SOC")
-        self.soh_metric = MetricDisplay("SOH")
-        self.delta_metric = MetricDisplay("单体压差")
-        for column, metric in enumerate(
-            (
-                self.voltage_metric,
-                self.current_metric,
-                self.soc_metric,
-                self.soh_metric,
-                self.delta_metric,
-            )
-        ):
-            metrics.addWidget(metric, 0, column)
-        root.addLayout(metrics)
-
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        signal_panel = QWidget()
-        signal_layout = QVBoxLayout(signal_panel)
-        signal_layout.setContentsMargins(0, 0, 0, 0)
-        signal_layout.addWidget(self._section_label("实时信号"))
-        self.signal_model = SignalTableModel(self)
-        self.signal_table = self._table(self.signal_model)
-        self.signal_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        signal_layout.addWidget(self.signal_table)
-
-        right_splitter = QSplitter(Qt.Orientation.Vertical)
-        cell_panel = QWidget()
-        cell_layout = QVBoxLayout(cell_panel)
-        cell_layout.setContentsMargins(0, 0, 0, 0)
-        cell_layout.addWidget(self._section_label("单体电压"))
-        self.cell_model = CellTableModel(self)
-        self.cell_table = self._table(self.cell_model)
-        self.cell_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        cell_layout.addWidget(self.cell_table)
-        issue_panel = QWidget()
-        issue_layout = QVBoxLayout(issue_panel)
-        issue_layout.setContentsMargins(0, 0, 0, 0)
-        issue_layout.addWidget(self._section_label("活动告警与故障"))
-        self.issue_list = QListWidget()
-        issue_layout.addWidget(self.issue_list)
-        right_splitter.addWidget(cell_panel)
-        right_splitter.addWidget(issue_panel)
-        right_splitter.setStretchFactor(0, 2)
-        right_splitter.setStretchFactor(1, 1)
-        splitter.addWidget(signal_panel)
-        splitter.addWidget(right_splitter)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 2)
-        root.addWidget(splitter, 1)
+        root.setContentsMargins(6, 6, 6, 6)
+        self.bms_overview_tabs = QTabWidget()
+        self.bms_overview_tabs.setDocumentMode(True)
+        self.bms_dashboards: dict[int, BmsDashboard] = {}
+        root.addWidget(self.bms_overview_tabs)
         self.tabs.addTab(page, "BMS 总览")
-        self._update_issues(BmsSnapshot(timestamp=0.0))
+        self._ensure_bms_dashboard(self.controller.pipeline.device_address)
 
     def _create_waveform_tab(self) -> None:
         self.waveform_panel = WaveformPanel(self.controller.pipeline.ring_buffer)
@@ -396,6 +345,11 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self) -> None:
         self.controller.frames_processed.connect(self._append_frames)
+        self.controller.bms_snapshot_updated.connect(self._update_bms_snapshot)
+        self.controller.detected_addresses_changed.connect(self._sync_bms_dashboards)
+        self.controller.detected_addresses_changed.connect(
+            self.waveform_panel.set_available_addresses
+        )
         self.controller.snapshot_updated.connect(self._update_snapshot)
         self.controller.events_received.connect(self.event_model.append_batch)
         self.controller.source_changed.connect(self._apply_source_state)
@@ -431,16 +385,49 @@ class MainWindow(QMainWindow):
                 if self._last_recording_directory.exists()
                 else self._user_data_directory
             ),
-            "CAN CSV (*.csv);;所有文件 (*)",
+            "记录数据库 (*.sqlite3 *.sqlite *.db);;CAN CSV (*.csv);;所有文件 (*)",
         )
         if not path:
             return
+        replay_path = Path(path)
+        session_id: int | None = None
         try:
+            if replay_path.suffix.lower() in SQLITE_REPLAY_SUFFIXES:
+                sessions = self.controller.recording_sessions(replay_path)
+                if not sessions:
+                    raise RuntimeError("记录数据库中没有可回放会话")
+                if len(sessions) > 1:
+                    dialog = ReplaySessionDialog(sessions, self)
+                    if dialog.exec() != ReplaySessionDialog.DialogCode.Accepted:
+                        return
+                    session_id = dialog.selected_session_id
+                else:
+                    session_id = sessions[0].session_id
             self.controller.start_replay(
-                path,
+                replay_path,
                 speed=self.replay_speed_spin.value(),
                 loop=self.replay_loop_check.isChecked(),
+                session_id=session_id,
             )
+        except DbcMismatchError:
+            answer = QMessageBox.warning(
+                self,
+                "DBC 定义不一致",
+                "记录使用的 DBC 与当前 DBC 不一致。继续时将使用当前 DBC 重新解码。",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                try:
+                    self.controller.start_replay(
+                        replay_path,
+                        speed=self.replay_speed_spin.value(),
+                        loop=self.replay_loop_check.isChecked(),
+                        session_id=session_id,
+                        allow_dbc_mismatch=True,
+                    )
+                except Exception as exc:
+                    self._show_error(str(exc))
         except Exception as exc:
             self._show_error(str(exc))
 
@@ -566,37 +553,62 @@ class MainWindow(QMainWindow):
         if follow_tail and not self.frame_model.paused:
             self.frame_table.scrollToBottom()
 
-    @staticmethod
-    def _signal_value(snapshot: BmsSnapshot, name: str):
-        signal = snapshot.signals.get(name)
-        return None if signal is None else signal.value
-
     def _update_snapshot(self, snapshot: BmsSnapshot) -> None:
-        self.signal_model.update_snapshot(snapshot)
-        self.cell_model.update_snapshot(snapshot)
-        self.voltage_metric.set_value(self._signal_value(snapshot, "BattVolt"), "V")
-        self.current_metric.set_value(self._signal_value(snapshot, "BattCurr"), "A")
-        self.soc_metric.set_value(self._signal_value(snapshot, "SOC"), "%")
-        self.soh_metric.set_value(self._signal_value(snapshot, "SOH"), "%")
-        cells = tuple(snapshot.cell_voltages_mv.values())
-        delta = max(cells) - min(cells) if cells else None
-        self.delta_metric.set_value(delta, "mV")
-        self._update_issues(snapshot)
         self.control_panel.update_snapshot(snapshot)
         self._refresh_control_availability()
 
-    def _update_issues(self, snapshot: BmsSnapshot) -> None:
-        self.issue_list.clear()
-        issues = (*snapshot.active_alarms, *snapshot.active_faults)
-        if not issues:
-            item = QListWidgetItem("无活动告警或故障")
-            item.setForeground(Qt.GlobalColor.darkGreen)
-            self.issue_list.addItem(item)
+    def _update_bms_snapshot(self, device_address: int, snapshot: BmsSnapshot) -> None:
+        self._ensure_bms_dashboard(device_address).update_snapshot(snapshot)
+
+    def _sync_bms_dashboards(self, addresses: tuple[int, ...]) -> None:
+        desired = set(addresses)
+        if not desired:
+            desired.add(self.controller.pipeline.device_address)
+        for address in tuple(self.bms_dashboards):
+            if address not in desired:
+                dashboard = self.bms_dashboards.pop(address)
+                index = self.bms_overview_tabs.indexOf(dashboard)
+                if index >= 0:
+                    self.bms_overview_tabs.removeTab(index)
+                dashboard.deleteLater()
+        for address in sorted(desired):
+            self._ensure_bms_dashboard(address)
+        self._refresh_dashboard_aliases()
+
+    def _ensure_bms_dashboard(self, device_address: int) -> BmsDashboard:
+        dashboard = self.bms_dashboards.get(device_address)
+        if dashboard is not None:
+            return dashboard
+        dashboard = BmsDashboard(device_address, self)
+        insertion_index = sum(
+            existing_address < device_address
+            for existing_address in self.bms_dashboards
+        )
+        self.bms_dashboards[device_address] = dashboard
+        self.bms_overview_tabs.insertTab(
+            insertion_index, dashboard, f"BMS {device_address}"
+        )
+        self._refresh_dashboard_aliases()
+        return dashboard
+
+    def _refresh_dashboard_aliases(self) -> None:
+        if not self.bms_dashboards:
             return
-        for issue in issues:
-            item = QListWidgetItem(issue)
-            item.setForeground(Qt.GlobalColor.darkRed)
-            self.issue_list.addItem(item)
+        default_address = self.controller.pipeline.device_address
+        dashboard = self.bms_dashboards.get(default_address)
+        if dashboard is None:
+            dashboard = self.bms_dashboards[min(self.bms_dashboards)]
+        self.signal_model = dashboard.signal_model
+        self.signal_table = dashboard.signal_table
+        self.cell_model = dashboard.cell_model
+        self.cell_table = dashboard.cell_table
+        self.issue_list = dashboard.issue_list
+        self.voltage_metric = dashboard.voltage_metric
+        self.current_metric = dashboard.current_metric
+        self.soc_metric = dashboard.soc_metric
+        self.soh_metric = dashboard.soh_metric
+        self.delta_metric = dashboard.delta_metric
+        self.temperature_metric = dashboard.temperature_metric
 
     def _apply_source_state(self, state: SourceState) -> None:
         self.source_label.setText(state.label)
@@ -607,6 +619,8 @@ class MainWindow(QMainWindow):
         self.source_label.style().unpolish(self.source_label)
         self.source_label.style().polish(self.source_label)
         idle = state.mode == "idle"
+        if idle:
+            self.waveform_panel.set_available_addresses(())
         self.connect_action.setEnabled(idle)
         self.replay_action.setEnabled(idle)
         self.demo_action.setEnabled(idle)

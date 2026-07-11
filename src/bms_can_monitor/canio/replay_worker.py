@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import csv
 from dataclasses import dataclass, replace
+from itertools import chain, pairwise
 from pathlib import Path
 from queue import Full, Queue
 from threading import Event, Thread
 from time import monotonic, time
-from typing import Iterable
+from typing import Iterable, Iterator, Protocol
 
 from bms_can_monitor.protocol.models import CanFrame
 
@@ -35,6 +36,26 @@ class ReplayStats:
     dropped: int
     loops_completed: int
     errors: int
+
+
+class ReplayFrameSource(Protocol):
+    @property
+    def frame_count(self) -> int: ...
+
+    def iter_frames(self) -> Iterator[CanFrame]: ...
+
+
+class MemoryReplaySource:
+    def __init__(self, frames: Iterable[CanFrame]) -> None:
+        self.frames = tuple(frames)
+        _validate_timestamps(self.frames)
+
+    @property
+    def frame_count(self) -> int:
+        return len(self.frames)
+
+    def iter_frames(self) -> Iterator[CanFrame]:
+        return iter(self.frames)
 
 
 def _parse_bool(value: str | None, *, default: bool = False) -> bool:
@@ -133,8 +154,8 @@ def write_replay_csv(path: str | Path, frames: Iterable[CanFrame]) -> Path:
     return replay_path
 
 
-def _validate_timestamps(frames: list[CanFrame]) -> None:
-    for previous, current in zip(frames, frames[1:]):
+def _validate_timestamps(frames: Iterable[CanFrame]) -> None:
+    for previous, current in pairwise(frames):
         if current.timestamp < previous.timestamp:
             raise ReplayFormatError("replay frame timestamps must be non-decreasing")
 
@@ -142,7 +163,7 @@ def _validate_timestamps(frames: list[CanFrame]) -> None:
 class ReplayWorker:
     def __init__(
         self,
-        frames: Iterable[CanFrame],
+        frames: Iterable[CanFrame] | ReplayFrameSource,
         output_queue: Queue[CanFrame],
         *,
         speed: float = 1.0,
@@ -152,8 +173,10 @@ class ReplayWorker:
     ) -> None:
         if speed <= 0:
             raise ValueError("replay speed must be positive")
-        self.frames = list(frames)
-        _validate_timestamps(self.frames)
+        if hasattr(frames, "iter_frames") and hasattr(frames, "frame_count"):
+            self.source = frames
+        else:
+            self.source = MemoryReplaySource(frames)
         self.output_queue = output_queue
         self.speed = speed
         self.loop = loop
@@ -211,12 +234,12 @@ class ReplayWorker:
             self._event_sink,
             CanEventType.REPLAY_STARTED,
             "CAN replay started",
-            frame_count=len(self.frames),
+            frame_count=self.source.frame_count,
             speed=self.speed,
             loop=self.loop,
         )
         try:
-            if not self.frames:
+            if not self.source.frame_count:
                 emit_event(
                     self._event_sink,
                     CanEventType.REPLAY_FINISHED,
@@ -254,10 +277,21 @@ class ReplayWorker:
                 )
 
     def _play_once(self) -> bool:
-        first_timestamp = self.frames[0].timestamp
+        iterator = iter(self.source.iter_frames())
+        try:
+            first_frame = next(iterator)
+        except StopIteration:
+            return True
+        first_timestamp = first_frame.timestamp
         started_monotonic = monotonic()
         started_timestamp = time()
-        for source_frame in self.frames:
+        previous_timestamp = first_timestamp
+        for source_frame in chain((first_frame,), iterator):
+            if source_frame.timestamp < previous_timestamp:
+                raise ReplayFormatError(
+                    "replay frame timestamps must be non-decreasing"
+                )
+            previous_timestamp = source_frame.timestamp
             offset = (source_frame.timestamp - first_timestamp) / self.speed
             delay = started_monotonic + offset - monotonic()
             if delay > 0 and self._stop_event.wait(delay):

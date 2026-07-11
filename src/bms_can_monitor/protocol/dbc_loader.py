@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from hashlib import sha256
 from pathlib import Path
 from threading import RLock
 
@@ -34,6 +35,7 @@ class DbcDecoder:
         self.path = Path(path).resolve()
         self._lock = RLock()
         self._database: Database
+        self._content_sha256 = ""
         self.reload()
 
     @property
@@ -44,12 +46,19 @@ class DbcDecoder:
     def messages(self) -> tuple[Message, ...]:
         return tuple(self._database.messages)
 
+    @property
+    def content_sha256(self) -> str:
+        with self._lock:
+            return self._content_sha256
+
     def reload(self) -> None:
         if not self.path.is_file():
             raise FileNotFoundError(f"DBC file not found: {self.path}")
         database = cantools.database.load_file(self.path, strict=True)
+        content_sha256 = sha256(self.path.read_bytes()).hexdigest()
         with self._lock:
             self._database = database
+            self._content_sha256 = content_sha256
 
     def message_for_frame(
         self, frame: CanFrame, *, device_address: int = 0

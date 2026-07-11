@@ -53,6 +53,17 @@ def test_frame_filter_searches_across_visible_columns():
     assert proxy.data(proxy.index(0, 7)) == "OTHER"
 
 
+def test_frame_model_displays_decoded_bms_address():
+    qapp()
+    model = FrameTableModel()
+    model.append_batch(
+        [(CanFrame(0x02F7, b"\x01", timestamp=1.0), "BATT_ST1", 3)]
+    )
+
+    assert model.headerData(8, Qt.Orientation.Horizontal) == "BMS"
+    assert model.data(model.index(0, 8)) == "3"
+
+
 def test_signal_and_cell_models_refresh_from_snapshot():
     qapp()
     snapshot = BmsSnapshot(

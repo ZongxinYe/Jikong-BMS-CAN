@@ -138,6 +138,27 @@ def test_stale_bms_state_rejects_control(tmp_path):
     controller.shutdown()
 
 
+def test_other_bms_recent_frame_does_not_authorize_address_zero(tmp_path):
+    controller = GuiController(
+        start_timers=False,
+        control_audit_path=tmp_path / "audit.jsonl",
+    )
+    adapter = ControlAdapter()
+    controller._current_config = BusConfig(device_address=0)
+    controller._adapter = adapter
+    controller._set_source_state(SourceState("live", "connected", active=True))
+    controller.pipeline.process_frame(
+        CanFrame(0x02F5, bytes.fromhex("13 01 D7 11 33"), timestamp=time())
+    )
+
+    with pytest.raises(ControlSafetyError, match="no recent BMS frame"):
+        controller.authorize_control(command(), CONTROL_CONFIRMATION_PHRASE)
+
+    assert controller.pipeline.detected_addresses == (1,)
+    assert adapter.sent == []
+    controller.shutdown()
+
+
 def test_audit_failure_blocks_adapter_send(tmp_path):
     audit_directory = tmp_path / "audit-is-a-directory"
     audit_directory.mkdir()

@@ -12,7 +12,13 @@ from .control_safety import (
 from .device_discovery import DeviceInfo, discover_devices
 from .diagnostics import DiagnosticSnapshot, collect_diagnostics
 from .events import CanEvent, CanEventType
-from .replay_worker import ReplayWorker, load_replay_csv, write_replay_csv
+from .replay_worker import (
+    MemoryReplaySource,
+    ReplayFrameSource,
+    ReplayWorker,
+    load_replay_csv,
+    write_replay_csv,
+)
 from .tx_scheduler import TxScheduler, TxTaskSnapshot
 
 __all__ = [
@@ -29,8 +35,10 @@ __all__ = [
     "ControlSafetyGate",
     "DeviceInfo",
     "DiagnosticSnapshot",
+    "MemoryReplaySource",
     "ReceiveWorkerStats",
     "ReplayWorker",
+    "ReplayFrameSource",
     "TxScheduler",
     "TxTaskSnapshot",
     "collect_diagnostics",

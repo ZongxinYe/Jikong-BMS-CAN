@@ -10,9 +10,12 @@
 - 将极空 BMS CAN V2.1 的 18 类报文固化为可修改的 DBC。
 - 支持默认/偏移设备地址、大小端字段、告警故障和 25 串单体电压组帧。
 - 支持 CANalyst-II 设备发现、连接、批量接收、单帧/周期发送和诊断。
-- 支持 CSV 离线回放，并与真实设备统一输出 `CanFrame`。
-- 支持最新 BMS 状态、波形环形缓存、SQLite 后台记录和 CSV 导出。
-- 支持 CANalyst-II 连接、CSV 回放、实时总览、分轨波形、报文筛选和记录控制 GUI。
+- 支持 CSV 和 SQLite 离线回放，并与真实设备统一输出 `CanFrame`。
+- 支持多 BMS 地址自动路由、独立状态和复合波形缓存。
+- 支持 raw-only SQLite 后台记录和回放/导出时按当前 DBC 重新解码。
+- 支持按地址切换的多 BMS 总览、温度摘要和带红绿极值的单体压差卡片。
+- 支持多选 BMS 并在同一信号图中叠加对比，地址颜色和图例保持稳定。
+- 支持 CANalyst-II 连接、离线回放、实时总览、分轨波形、报文筛选和记录控制 GUI。
 - 支持默认锁定、双重确认、单次授权和独立审计的 `Ctrl_INFO` 控制发送。
 - 在不连接硬件的情况下用 PDF 示例帧完成协议测试。
 
@@ -29,7 +32,16 @@ bms-can-monitor
 bms-can-monitor --demo
 ```
 
-也可通过 `bms-can-monitor --replay <CAN帧.csv> --speed 5` 启动离线回放。界面功能、线程边界和真机验收项见 `docs\phase4-gui.md`。
+演示模式默认生成 `BMS 0`、`BMS 1`、`BMS 2` 三个地址，可直接检查多页签隔离和温度显示。连接面板中的“控制地址”只决定受保护控制功能的目标，不限制总线上的 BMS 自动发现。
+
+也可通过下面的命令启动离线回放：
+
+```powershell
+bms-can-monitor --replay <CAN帧.csv> --speed 5
+bms-can-monitor --replay <记录.sqlite3> --session 1 --speed 5
+```
+
+SQLite 未指定 `--session` 时默认回放最新会话。界面功能、线程边界和真机验收项见 `docs\phase4-gui.md`。
 
 BMS 控制默认锁定，只允许真实 CAN、正常模式、默认地址和近期有报文的场景。MaskCode、双重确认、审计日志及限制见 `docs\phase5-control-safety.md`。
 
@@ -98,7 +110,7 @@ pipeline = DataPipeline(recorder=recorder)
 # 对接收队列中的每个 frame 调用：
 pipeline.process_frame(frame)
 
-recorder.stop()
+recorder.stop(detected_addresses=pipeline.detected_addresses)
 ```
 
-数据库结构、波形缓存和 CSV 导出说明见 `docs\phase3-data-recording.md`。
+schema v2 新会话只保存完整原始帧和事件，不保存逐信号样本。数据库结构、波形缓存和 CSV 导出说明见 `docs\phase3-data-recording.md`。

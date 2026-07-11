@@ -14,6 +14,7 @@ def decoder():
 
 def test_dbc_contains_every_v2_1_message(decoder):
     assert len(decoder.messages) == 18
+    assert len(decoder.content_sha256) == 64
     assert {message.name for message in decoder.messages} >= {
         "BATT_ST1",
         "CELL_VOLT",

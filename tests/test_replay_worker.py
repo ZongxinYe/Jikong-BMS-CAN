@@ -1,5 +1,6 @@
 from queue import Queue
 from threading import Event
+from time import monotonic, sleep
 
 import pytest
 
@@ -135,3 +136,41 @@ def test_empty_replay_finishes_cleanly():
     assert finished.wait(1)
     worker.join(1)
     assert worker.stats.emitted == 0
+
+
+class RepeatableStreamingSource:
+    frame_count = 2
+
+    def __init__(self):
+        self.iterations = 0
+
+    def iter_frames(self):
+        self.iterations += 1
+        yield CanFrame(0x100, b"\x01", timestamp=10.0)
+        yield CanFrame(0x101, b"\x02", timestamp=10.001)
+
+
+def test_replay_worker_accepts_non_iterable_streaming_source():
+    source = RepeatableStreamingSource()
+    output = Queue()
+    worker = ReplayWorker(source, output, speed=100.0)
+
+    worker.start()
+    worker.join(1)
+
+    assert source.iterations == 1
+    assert [output.get_nowait().can_id for _ in range(2)] == [0x100, 0x101]
+
+
+def test_looping_streaming_replay_reopens_source():
+    source = RepeatableStreamingSource()
+    worker = ReplayWorker(source, Queue(maxsize=100), speed=100.0, loop=True)
+    worker.start()
+    deadline = monotonic() + 1.0
+    while source.iterations < 2 and monotonic() < deadline:
+        sleep(0.005)
+    worker.stop()
+    worker.join(1)
+
+    assert source.iterations >= 2
+    assert worker.is_running is False
