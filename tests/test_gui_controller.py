@@ -112,9 +112,14 @@ def test_controller_records_gui_pipeline_session(tmp_path):
 
 def test_demo_source_can_start_and_stop():
     controller = GuiController(start_timers=False)
+    controller.inject_frames(build_demo_frames(time(), 1))
+    controller.drain_once(time_budget_ms=100)
+    assert controller.pipeline.ring_buffer.series("BattVolt", device_address=0)
     controller.start_demo()
     assert controller.source_state.mode == "demo"
     assert controller.source_state.active is True
+    assert controller.pipeline.ring_buffer.series("BattVolt", device_address=0) == ()
+    assert controller.pipeline.detected_addresses == ()
     controller.disconnect_source()
     assert controller.source_state.mode == "idle"
     controller.shutdown()

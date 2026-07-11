@@ -25,6 +25,8 @@ def test_main_window_builds_and_refreshes_offscreen():
     assert window.tabs.count() == 5
     assert window.bms_overview_tabs.count() == 3
     assert tuple(window.bms_dashboards) == (0, 1, 2)
+    assert window.waveform_panel.selected_addresses == (0, 1, 2)
+    assert len(window.waveform_panel._curves) == 9
     assert [
         window.bms_overview_tabs.tabText(index)
         for index in range(window.bms_overview_tabs.count())
@@ -92,6 +94,8 @@ def test_main_window_creates_and_clears_five_bms_dashboards():
     app.processEvents()
     assert tuple(window.bms_dashboards) == (0,)
     assert window.bms_dashboards[0].signal_model.rowCount() == 0
+    assert window.waveform_panel.selected_addresses == ()
+    assert window.waveform_panel._curves == {}
 
     window.close()
     app.processEvents()

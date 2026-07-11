@@ -347,6 +347,9 @@ class MainWindow(QMainWindow):
         self.controller.frames_processed.connect(self._append_frames)
         self.controller.bms_snapshot_updated.connect(self._update_bms_snapshot)
         self.controller.detected_addresses_changed.connect(self._sync_bms_dashboards)
+        self.controller.detected_addresses_changed.connect(
+            self.waveform_panel.set_available_addresses
+        )
         self.controller.snapshot_updated.connect(self._update_snapshot)
         self.controller.events_received.connect(self.event_model.append_batch)
         self.controller.source_changed.connect(self._apply_source_state)
@@ -616,6 +619,8 @@ class MainWindow(QMainWindow):
         self.source_label.style().unpolish(self.source_label)
         self.source_label.style().polish(self.source_label)
         idle = state.mode == "idle"
+        if idle:
+            self.waveform_panel.set_available_addresses(())
         self.connect_action.setEnabled(idle)
         self.replay_action.setEnabled(idle)
         self.demo_action.setEnabled(idle)

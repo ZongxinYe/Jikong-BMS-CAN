@@ -212,6 +212,7 @@ class GuiController(QObject):
             raise RuntimeError("请先停止当前数据源")
         self._current_config = config
         self.pipeline.device_address = config.device_address
+        self.reset_data()
         self._set_source_state(
             SourceState("live", "正在连接 CANalyst-II", busy=True)
         )
@@ -304,6 +305,7 @@ class GuiController(QObject):
                 == replay_path.resolve()
             ):
                 raise RuntimeError("cannot replay the database currently being recorded")
+        self.reset_data()
         self._set_source_state(
             SourceState("replay", "正在加载回放文件", busy=True, detail=str(replay_path))
         )
@@ -328,6 +330,7 @@ class GuiController(QObject):
     def start_demo(self) -> None:
         if self.source_state.mode != "idle":
             raise RuntimeError("请先停止当前数据源")
+        self.reset_data()
         self._demo_step = 0
         self._demo_timer.start()
         self._set_source_state(
