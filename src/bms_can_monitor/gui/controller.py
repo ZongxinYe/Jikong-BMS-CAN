@@ -43,6 +43,7 @@ from .demo import build_demo_frames
 
 DEFAULT_WAVEFORM_SIGNALS = (
     "BattVolt",
+    "CellVoltSum",
     "BattCurr",
     "SOC",
     "MaxCellVolt",

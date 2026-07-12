@@ -22,6 +22,9 @@ class BmsStateStore:
         self._signals: dict[str, DecodedSignal] = {}
         self._cell_voltages_mv: dict[int, int] = {}
         self._cell_timestamps: dict[int, float] = {}
+        self._cell_voltage_sum_v: float | None = None
+        self._summed_cell_count = 0
+        self._cell_voltage_sum_timestamp = 0.0
         self._active_alarms: tuple[str, ...] = ()
         self._active_faults: tuple[str, ...] = ()
         self._alarm_timestamp = 0.0
@@ -43,6 +46,9 @@ class BmsStateStore:
         message: DecodedMessage,
         *,
         cell_voltages_mv: Mapping[int, int] | None = None,
+        cell_voltage_sum_v: float | None = None,
+        summed_cell_count: int = 0,
+        cell_voltage_sum_timestamp: float | None = None,
         active_alarms: tuple[str, ...] | None = None,
         active_faults: tuple[str, ...] | None = None,
     ) -> BmsSnapshot:
@@ -59,6 +65,16 @@ class BmsStateStore:
 
             if cell_voltages_mv is not None:
                 self._update_cells_locked(cell_voltages_mv, timestamp)
+            if cell_voltage_sum_v is not None:
+                sum_timestamp = (
+                    timestamp
+                    if cell_voltage_sum_timestamp is None
+                    else float(cell_voltage_sum_timestamp)
+                )
+                if sum_timestamp >= self._cell_voltage_sum_timestamp:
+                    self._cell_voltage_sum_v = float(cell_voltage_sum_v)
+                    self._summed_cell_count = int(summed_cell_count)
+                    self._cell_voltage_sum_timestamp = sum_timestamp
             if active_alarms is not None and timestamp >= self._alarm_timestamp:
                 self._active_alarms = tuple(active_alarms)
                 self._alarm_timestamp = timestamp
@@ -98,6 +114,13 @@ class BmsStateStore:
                 if current is None or signal.timestamp >= current.timestamp:
                     self._signals[signal.name] = signal
             self._update_cells_locked(snapshot.cell_voltages_mv, snapshot.timestamp)
+            if (
+                snapshot.cell_voltage_sum_v is not None
+                and snapshot.timestamp >= self._cell_voltage_sum_timestamp
+            ):
+                self._cell_voltage_sum_v = float(snapshot.cell_voltage_sum_v)
+                self._summed_cell_count = int(snapshot.summed_cell_count)
+                self._cell_voltage_sum_timestamp = snapshot.timestamp
             if snapshot.timestamp >= self._alarm_timestamp:
                 self._active_alarms = tuple(snapshot.active_alarms)
                 self._alarm_timestamp = snapshot.timestamp
@@ -124,6 +147,8 @@ class BmsStateStore:
             timestamp=self._timestamp,
             signals=dict(self._signals),
             cell_voltages_mv=dict(sorted(self._cell_voltages_mv.items())),
+            cell_voltage_sum_v=self._cell_voltage_sum_v,
+            summed_cell_count=self._summed_cell_count,
             active_alarms=self._active_alarms,
             active_faults=self._active_faults,
         )
@@ -134,6 +159,9 @@ class BmsStateStore:
             self._signals.clear()
             self._cell_voltages_mv.clear()
             self._cell_timestamps.clear()
+            self._cell_voltage_sum_v = None
+            self._summed_cell_count = 0
+            self._cell_voltage_sum_timestamp = 0.0
             self._active_alarms = ()
             self._active_faults = ()
             self._alarm_timestamp = 0.0

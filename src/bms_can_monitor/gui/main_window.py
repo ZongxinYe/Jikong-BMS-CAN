@@ -609,6 +609,10 @@ class MainWindow(QMainWindow):
         self.soh_metric = dashboard.soh_metric
         self.delta_metric = dashboard.delta_metric
         self.temperature_metric = dashboard.temperature_metric
+        self.remaining_capacity_metric = dashboard.remaining_capacity_metric
+        self.full_charge_capacity_metric = dashboard.full_charge_capacity_metric
+        self.cycle_capacity_metric = dashboard.cycle_capacity_metric
+        self.cycle_count_metric = dashboard.cycle_count_metric
 
     def _apply_source_state(self, state: SourceState) -> None:
         self.source_label.setText(state.label)

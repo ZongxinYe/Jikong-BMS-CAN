@@ -69,3 +69,13 @@ def test_address_selection_survives_new_discovery_and_reset():
     assert panel.bms_list.count() == 0
     assert panel._curves == {}
     assert panel.trace_count_label.text() == "0 BMS · 3 信号 · 0 曲线"
+
+
+def test_cell_voltage_sum_is_available_for_waveform_selection():
+    qapp()
+    panel = WaveformPanel(SignalRingBuffer())
+    names = {
+        panel.signal_list.item(index).data(Qt.ItemDataRole.UserRole)
+        for index in range(panel.signal_list.count())
+    }
+    assert "CellVoltSum" in names

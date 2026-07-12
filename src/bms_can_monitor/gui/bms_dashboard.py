@@ -34,11 +34,15 @@ class BmsDashboard(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(8)
+        self.address_label = QLabel(f"设备地址 {self.device_address}")
+        self.address_label.setObjectName("sectionTitle")
+        root.addWidget(self.address_label)
         metrics = QGridLayout()
         metrics.setSpacing(7)
         metrics.setColumnStretch(0, 1)
         metrics.setColumnStretch(1, 1)
         metrics.setColumnStretch(2, 1)
+        metrics.setColumnStretch(3, 1)
 
         self.voltage_metric = MetricDisplay("电池总压")
         self.current_metric = MetricDisplay("电池电流")
@@ -46,6 +50,10 @@ class BmsDashboard(QWidget):
         self.soh_metric = MetricDisplay("SOH")
         self.delta_metric = RangeMetricDisplay("单体压差")
         self.temperature_metric = RangeMetricDisplay("单体温度")
+        self.remaining_capacity_metric = MetricDisplay("剩余容量")
+        self.full_charge_capacity_metric = MetricDisplay("满充容量")
+        self.cycle_capacity_metric = MetricDisplay("循环容量")
+        self.cycle_count_metric = MetricDisplay("循环次数")
         for index, metric in enumerate(
             (
                 self.voltage_metric,
@@ -54,9 +62,13 @@ class BmsDashboard(QWidget):
                 self.soh_metric,
                 self.delta_metric,
                 self.temperature_metric,
+                self.remaining_capacity_metric,
+                self.full_charge_capacity_metric,
+                self.cycle_capacity_metric,
+                self.cycle_count_metric,
             )
         ):
-            metrics.addWidget(metric, index // 3, index % 3)
+            metrics.addWidget(metric, index // 4, index % 4)
         root.addLayout(metrics)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -127,10 +139,27 @@ class BmsDashboard(QWidget):
     def update_snapshot(self, snapshot: BmsSnapshot) -> None:
         self.signal_model.update_snapshot(snapshot)
         self.cell_model.update_snapshot(snapshot)
-        self.voltage_metric.set_value(self._signal_value(snapshot, "BattVolt"), "V")
+        sum_detail = None
+        if snapshot.cell_voltage_sum_v is not None:
+            sum_detail = f"(单体合计 {snapshot.cell_voltage_sum_v:.3f} V)"
+        self.voltage_metric.set_value(
+            self._signal_value(snapshot, "BattVolt"), "V", detail=sum_detail
+        )
         self.current_metric.set_value(self._signal_value(snapshot, "BattCurr"), "A")
         self.soc_metric.set_value(self._signal_value(snapshot, "SOC"), "%")
         self.soh_metric.set_value(self._signal_value(snapshot, "SOH"), "%")
+        self.remaining_capacity_metric.set_value(
+            self._signal_value(snapshot, "CapRemain"), "Ah"
+        )
+        self.full_charge_capacity_metric.set_value(
+            self._signal_value(snapshot, "FulChargeCap"), "Ah"
+        )
+        self.cycle_capacity_metric.set_value(
+            self._signal_value(snapshot, "CycleCap"), "Ah"
+        )
+        self.cycle_count_metric.set_value(
+            self._signal_value(snapshot, "CycleCount"), "次"
+        )
         self._update_voltage_range(snapshot)
         self._update_temperature(snapshot)
         self._update_issues(snapshot)

@@ -38,6 +38,10 @@ def test_main_window_builds_and_refreshes_offscreen():
     assert window.frame_model.rowCount() > 0
     assert window.voltage_metric.value_label.text().endswith(" V")
     assert window.temperature_metric.value_label.text().endswith(" °C")
+    assert window.remaining_capacity_metric.value_label.text().endswith(" Ah")
+    assert window.full_charge_capacity_metric.value_label.text().endswith(" Ah")
+    assert window.cycle_capacity_metric.value_label.text().endswith(" Ah")
+    assert window.cycle_count_metric.value_label.text().endswith(" 次")
     assert "#b42318" in window.delta_metric.high_value_label.styleSheet()
     assert "#13705a" in window.delta_metric.low_value_label.styleSheet()
     assert (
@@ -58,13 +62,22 @@ def test_main_window_builds_and_refreshes_offscreen():
         dashboard.soh_metric,
         dashboard.delta_metric,
         dashboard.temperature_metric,
+        dashboard.remaining_capacity_metric,
+        dashboard.full_charge_capacity_metric,
+        dashboard.cycle_capacity_metric,
+        dashboard.cycle_count_metric,
     )
-    assert all(widget.width() > 0 and widget.height() > 0 for widget in metric_widgets)
-    assert all(
-        not first.geometry().intersects(second.geometry())
-        for index, first in enumerate(metric_widgets)
-        for second in metric_widgets[index + 1 :]
-    )
+    for width, height in ((1024, 680), (1440, 900)):
+        window.resize(width, height)
+        app.processEvents()
+        assert all(
+            widget.width() > 0 and widget.height() > 0 for widget in metric_widgets
+        )
+        assert all(
+            not first.geometry().intersects(second.geometry())
+            for index, first in enumerate(metric_widgets)
+            for second in metric_widgets[index + 1 :]
+        )
 
     window.close()
     app.processEvents()

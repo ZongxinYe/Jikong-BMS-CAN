@@ -24,6 +24,7 @@ from bms_can_monitor.data import BmsSignalKey, SignalRingBuffer
 
 SIGNAL_LABELS = {
     "BattVolt": "电池总压",
+    "CellVoltSum": "单体合计电压",
     "BattCurr": "电池电流",
     "SOC": "SOC",
     "SOH": "SOH",
@@ -33,10 +34,14 @@ SIGNAL_LABELS = {
     "MinCellTemp": "最低单体温度",
     "AvrgCellTemp": "平均单体温度",
     "CapRemain": "剩余容量",
+    "FulChargeCap": "满充容量",
+    "CycleCap": "循环容量",
+    "CycleCount": "循环次数",
 }
 
 SIGNAL_UNITS = {
     "BattVolt": "V",
+    "CellVoltSum": "V",
     "BattCurr": "A",
     "SOC": "%",
     "SOH": "%",
@@ -46,6 +51,9 @@ SIGNAL_UNITS = {
     "MinCellTemp": "°C",
     "AvrgCellTemp": "°C",
     "CapRemain": "Ah",
+    "FulChargeCap": "Ah",
+    "CycleCap": "Ah",
+    "CycleCount": "次",
 }
 
 BMS_COLORS = (
@@ -77,10 +85,20 @@ class MetricDisplay(QFrame):
         self.title_label.setObjectName("metricTitle")
         self.value_label = QLabel("--")
         self.value_label.setObjectName("metricValue")
+        self.detail_label = QLabel()
+        self.detail_label.setObjectName("metricDetail")
+        self.detail_label.setVisible(False)
         layout.addWidget(self.title_label)
         layout.addWidget(self.value_label)
+        layout.addWidget(self.detail_label)
 
-    def set_value(self, value: object | None, unit: str = "") -> None:
+    def set_value(
+        self,
+        value: object | None,
+        unit: str = "",
+        *,
+        detail: str | None = None,
+    ) -> None:
         if value is None:
             text = "--"
         elif isinstance(value, float):
@@ -88,6 +106,8 @@ class MetricDisplay(QFrame):
         else:
             text = str(value)
         self.value_label.setText(f"{text} {unit}".rstrip())
+        self.detail_label.setText(detail or "")
+        self.detail_label.setVisible(bool(detail))
 
 
 class RangeMetricDisplay(QFrame):

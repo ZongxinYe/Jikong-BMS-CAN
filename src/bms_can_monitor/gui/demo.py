@@ -50,6 +50,19 @@ def _build_address_frames(
     frames: list[CanFrame] = [
         CanFrame(0x02F4 + address, status, timestamp=timestamp, source="demo"),
         CanFrame(
+            0x18F128F4 + address,
+            pack(
+                "<HHH",
+                max(0, round((100 - address * 8) * soc / 100 * 10)),
+                (100 - address * 8) * 10,
+                (94 - address * 7) * 10,
+            )
+            + bytes((0, 80 + address * 12)),
+            timestamp=timestamp,
+            is_extended=True,
+            source="demo",
+        ),
+        CanFrame(
             0x04F4 + address,
             pack("<HBHB", max_cell, max_cell_no, min_cell, min_cell_no),
             timestamp=timestamp,

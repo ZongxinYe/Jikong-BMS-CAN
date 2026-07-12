@@ -23,6 +23,17 @@ def cell_frame(address: int, *, base_mv: int, timestamp: float) -> CanFrame:
     )
 
 
+def cell_chunk_frame(
+    address: int, chunk: int, *, base_mv: int, timestamp: float
+) -> CanFrame:
+    return CanFrame(
+        0x18E028F4 + chunk * 0x00010000 + address,
+        pack("<HHHH", *(base_mv + chunk * 4 + offset for offset in range(4))),
+        timestamp=timestamp,
+        is_extended=True,
+    )
+
+
 def test_five_interleaved_bms_addresses_keep_independent_state():
     pipeline = DataPipeline(
         ring_buffer=SignalRingBuffer(["BattVolt", "SOC"])
@@ -109,3 +120,36 @@ def test_reset_one_address_does_not_clear_other_bms():
     assert pipeline.detected_addresses == (1,)
     assert pipeline.ring_buffer.series("BattVolt", device_address=0) == ()
     assert pipeline.ring_buffer.series("BattVolt", device_address=1)
+
+
+def test_complete_cell_sums_are_buffered_independently_by_address():
+    buffer = SignalRingBuffer(["CellVoltSum"])
+    pipeline = DataPipeline(ring_buffer=buffer)
+    for address in (0, 1):
+        for chunk in range(4):
+            pipeline.process_frame(
+                cell_chunk_frame(
+                    address,
+                    chunk,
+                    base_mv=3300 + address * 100,
+                    timestamp=1.0 + chunk / 100,
+                )
+            )
+        pipeline.process_frame(
+            cell_chunk_frame(
+                address,
+                0,
+                base_mv=3301 + address * 100,
+                timestamp=2.0,
+            )
+        )
+
+    assert pipeline.snapshot(0).cell_voltage_sum_v == pytest.approx(52.92)
+    assert pipeline.snapshot(0).summed_cell_count == 16
+    assert pipeline.snapshot(1).cell_voltage_sum_v == pytest.approx(54.52)
+    assert [point.value for point in buffer.series("CellVoltSum", device_address=0)] == [
+        pytest.approx(52.92)
+    ]
+    assert [point.value for point in buffer.series("CellVoltSum", device_address=1)] == [
+        pytest.approx(54.52)
+    ]

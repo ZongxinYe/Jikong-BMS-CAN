@@ -85,5 +85,7 @@ class BmsSnapshot:
     timestamp: float
     signals: Mapping[str, DecodedSignal] = field(default_factory=dict)
     cell_voltages_mv: Mapping[int, int] = field(default_factory=dict)
+    cell_voltage_sum_v: float | None = None
+    summed_cell_count: int = 0
     active_alarms: tuple[str, ...] = ()
     active_faults: tuple[str, ...] = ()

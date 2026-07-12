@@ -145,6 +145,7 @@ class DataPipeline:
             return None
 
         context = self._context(resolved.device_address)
+        previous_sum_revision = context.decoder.cell_voltages.complete_revision
         try:
             message = context.decoder.decode(
                 frame, device_address=resolved.device_address
@@ -158,6 +159,14 @@ class DataPipeline:
             if normalized_cell_chunk(frame.can_id, resolved.device_address) is not None
             else None
         )
+        cell_voltage_sum_v = None
+        summed_cell_count = 0
+        cell_voltage_sum_timestamp = None
+        assembler = context.decoder.cell_voltages
+        if assembler.complete_revision > previous_sum_revision:
+            cell_voltage_sum_v = assembler.voltage_sum_v
+            summed_cell_count = len(assembler.complete_values)
+            cell_voltage_sum_timestamp = assembler.complete_timestamp
         active_alarms = (
             context.decoder.active_alarms(message)
             if message.name == "ALM_INFO"
@@ -171,12 +180,22 @@ class DataPipeline:
         context.state_store.update_message(
             message,
             cell_voltages_mv=cell_values,
+            cell_voltage_sum_v=cell_voltage_sum_v,
+            summed_cell_count=summed_cell_count,
+            cell_voltage_sum_timestamp=cell_voltage_sum_timestamp,
             active_alarms=active_alarms,
             active_faults=active_faults,
         )
         with self._context_lock:
             self._detected_addresses.add(resolved.device_address)
         self.ring_buffer.append_message(message)
+        if cell_voltage_sum_v is not None and cell_voltage_sum_timestamp is not None:
+            self.ring_buffer.append(
+                "CellVoltSum",
+                cell_voltage_sum_timestamp,
+                cell_voltage_sum_v,
+                device_address=resolved.device_address,
+            )
         return message
 
     def process_event(self, event: CanEvent) -> None:

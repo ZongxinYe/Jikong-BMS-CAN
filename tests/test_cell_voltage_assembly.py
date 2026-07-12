@@ -30,6 +30,40 @@ def test_zero_padding_removes_nonexistent_cells():
     assert assembler.values == {5: 3756}
 
 
+def test_sum_is_published_only_after_a_complete_scan():
+    assembler = CellVoltageAssembler()
+    for chunk in range(4):
+        assembler.update(
+            cell_frame(
+                0x18E028F4 + chunk * 0x00010000,
+                "E4 0C E4 0C E4 0C E4 0C",
+            )
+        )
+    assert assembler.voltage_sum_v is None
+
+    assembler.update(cell_frame(0x18E028F4, "E5 0C E5 0C E5 0C E5 0C"))
+    assert assembler.expected_cell_count == 16
+    assert assembler.voltage_sum_v == pytest.approx(52.8)
+    assert len(assembler.complete_values) == 16
+
+    for chunk in range(1, 4):
+        assembler.update(
+            cell_frame(
+                0x18E028F4 + chunk * 0x00010000,
+                "E5 0C E5 0C E5 0C E5 0C",
+            )
+        )
+    assert assembler.voltage_sum_v == pytest.approx(52.816)
+    assert assembler.complete_revision == 2
+
+
+def test_zero_padded_last_frame_can_publish_first_scan():
+    assembler = CellVoltageAssembler()
+    assembler.update(cell_frame(0x18E028F4, "E4 0C E4 0C 00 00 00 00"))
+    assert assembler.expected_cell_count == 2
+    assert assembler.voltage_sum_v == pytest.approx(6.6)
+
+
 def test_cell_voltage_assembly_honors_device_address():
     assembler = CellVoltageAssembler()
     assembler.update(cell_frame(0x18E028F7, "AD 0E"), device_address=3)
