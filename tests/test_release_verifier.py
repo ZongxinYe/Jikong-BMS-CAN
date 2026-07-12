@@ -14,6 +14,7 @@ def test_packaging_inputs_exist():
     assert (root / "packaging" / "version_info.txt").is_file()
     assert (root / "src" / "bms_can_monitor" / "protocol" / "bms_jikong_v2_1.dbc").is_file()
     assert default_dll_path().is_file()
+    assert (root / "docs" / "phase7-multi-bms-raw-replay.md").is_file()
 
 
 def test_release_verifier_reports_missing_directory(tmp_path):

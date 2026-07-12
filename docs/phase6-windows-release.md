@@ -8,6 +8,7 @@ Phase 6 使用 PyInstaller 生成 64 位 one-folder 发行包：
 dist\BMS-CAN-Monitor\
   BMS-CAN-Monitor.exe
   Documentation\
+    phase7-multi-bms-raw-replay.md
   release-manifest.json
   _internal\
     bms_can_monitor\protocol\bms_jikong_v2_1.dbc
@@ -55,18 +56,20 @@ $env:BMS_CAN_MONITOR_DATA_DIR = "D:\BMS-Test-Data"
 3. 总线两端各使用一个 120 欧终端电阻；断电测量 CAN-H 与 CAN-L 通常应接近 60 欧。
 4. 连接 CANalyst-II USB，并确认 Windows 设备驱动正常。
 5. 先使用“只听模式”确认报文，再根据需要切换正常模式。极空协议默认 250 kbps。
-6. 默认设备地址为 `0`。非零地址只影响监测；Phase 5 控制发送仍被锁定。
+6. 程序自动监测地址 `0..11`；左侧“控制地址”只决定受保护控制功能的目标，非零地址控制发送仍被锁定。
 
 不要把 CAN-H/CAN-L 接到电池正负极。首次接线和首次控制应在有保险、急停及隔离措施的台架上完成。
 
 ## 启动与采集
 
 1. 解压完整发行目录并双击 `BMS-CAN-Monitor.exe`。
-2. 在左侧确认设备号、CAN1/CAN2、250 kbps、BMS 地址和 DLL 路径。
+2. 在左侧确认设备号、CAN1/CAN2、250 kbps、控制地址和 DLL 路径。
 3. 单击“连接”，确认状态显示 CANalyst-II 已连接。
 4. 在 CAN 报文页确认存在 `0x02F4`、`0x18F128F4` 等预期报文。
 5. 开启记录后选择 SQLite 文件，观察状态栏记录队列不持续增长。
 6. 停止时先停止记录，再停止 CAN 数据源。
+
+多个 BMS 地址会自动出现在总览标签和波形 BMS 列表中。SQLite 新会话只保存完整原始帧；记录可直接从界面回放，并按当前 DBC 重新生成各地址数据。详细说明见 `phase7-multi-bms-raw-replay.md`。
 
 BMS 控制功能默认锁定。现场控制流程和审计要求见 `phase5-control-safety.md`。
 
@@ -84,7 +87,7 @@ BMS 控制功能默认锁定。现场控制流程和审计要求见 `phase5-cont
 - 核对 CAN-H/CAN-L 是否接反、GND 是否连接、终端电阻和 BMS 是否上电。
 - 核对通道和 250 kbps。
 - 先使用只听模式排除本软件主动发送影响。
-- 核对 BMS APP 设备地址；地址不符时原始帧可见但 DBC 信号不会匹配。
+- 核对 BMS APP 地址是否为 `0..11` 且各设备唯一；程序会自动解析有效地址，未知帧只保留在原始报文和记录中。
 
 ### 运行中拔掉 USB
 
@@ -98,6 +101,6 @@ BMS 控制功能默认锁定。现场控制流程和审计要求见 `phase5-cont
 
 ## 发行验证
 
-`tools\verify_windows_release.py` 验证 EXE、DBC、ControlCAN.dll 和 x64 架构。带 `--launch` 时，会清除 `PYTHONHOME/PYTHONPATH`，把 PATH 缩减到 Windows 系统目录，从临时工作目录启动打包 EXE，运行 1.5 秒演示数据后自动关闭。
+`tools\verify_windows_release.py` 验证 EXE、DBC、ControlCAN.dll、多 BMS 使用文档和 x64 架构。带 `--launch` 时，会清除 `PYTHONHOME/PYTHONPATH`，把 PATH 缩减到 Windows 系统目录，从临时工作目录启动打包 EXE，运行 1.5 秒多地址演示数据后自动关闭。
 
 这能验证发行包不依赖开发机 Python 路径，但不能替代一台从未安装 Python 的干净 Windows 电脑验收。

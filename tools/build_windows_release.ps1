@@ -32,6 +32,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $ProjectRoot "docs\phase5-control-safety.md") -Destination $DocumentationDirectory -Force
     Copy-Item -LiteralPath (Join-Path $ProjectRoot "docs\phase6-windows-release.md") -Destination $DocumentationDirectory -Force
     Copy-Item -LiteralPath (Join-Path $ProjectRoot "docs\phase6-field-validation.md") -Destination $DocumentationDirectory -Force
+    Copy-Item -LiteralPath (Join-Path $ProjectRoot "docs\phase7-multi-bms-raw-replay.md") -Destination $DocumentationDirectory -Force
 
     python -B tools\verify_windows_release.py $ReleaseDirectory
     if ($LASTEXITCODE -ne 0) {

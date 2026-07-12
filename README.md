@@ -41,7 +41,7 @@ bms-can-monitor --replay <CAN帧.csv> --speed 5
 bms-can-monitor --replay <记录.sqlite3> --session 1 --speed 5
 ```
 
-SQLite 未指定 `--session` 时默认回放最新会话。界面功能、线程边界和真机验收项见 `docs\phase4-gui.md`。
+SQLite 未指定 `--session` 时默认回放最新会话。多 BMS 地址、温度、波形、raw-only 记录和 SQLite 回放的完整说明见 `docs\phase7-multi-bms-raw-replay.md`；界面线程边界见 `docs\phase4-gui.md`。
 
 BMS 控制默认锁定，只允许真实 CAN、正常模式、默认地址和近期有报文的场景。MaskCode、双重确认、审计日志及限制见 `docs\phase5-control-safety.md`。
 

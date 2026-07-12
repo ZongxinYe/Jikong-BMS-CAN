@@ -161,6 +161,43 @@ def test_controller_replays_sqlite_and_rebuilds_multiple_bms(tmp_path):
     controller.shutdown()
 
 
+def test_five_bms_raw_recording_replay_preserves_address_scoped_state(tmp_path):
+    recorded = GuiController(start_timers=False)
+    database = tmp_path / "five-bms-roundtrip.sqlite3"
+    session_id = recorded.start_recording(database, note="5 BMS roundtrip")
+    frames = build_demo_frames(time(), 20, range(5))
+    recorded.inject_frames(frames)
+    recorded.drain_once(frame_limit=2_000, time_budget_ms=100)
+    expected = recorded.pipeline.snapshots()
+    recorded.stop_recording()
+    recorded.shutdown()
+
+    replayed = GuiController(start_timers=False)
+    replayed.start_replay(database, session_id=session_id, speed=1_000.0)
+    replayed._source_thread.join(1)
+    replay_worker = replayed._replay_worker
+    assert replay_worker is not None
+    replay_worker.join(2)
+    replayed.drain_once(frame_limit=2_000, time_budget_ms=100)
+
+    assert replayed.pipeline.detected_addresses == (0, 1, 2, 3, 4)
+    for address in range(5):
+        actual = replayed.pipeline.snapshot(address)
+        for name in (
+            "BattVolt",
+            "BattCurr",
+            "SOC",
+            "SOH",
+            "MaxCellTemp",
+            "MinCellTemp",
+            "AvrgCellTemp",
+        ):
+            assert actual.signals[name].value == expected[address].signals[name].value
+        assert actual.cell_voltages_mv == expected[address].cell_voltages_mv
+        assert len(actual.cell_voltages_mv) == 16
+    replayed.shutdown()
+
+
 def test_controller_requires_explicit_consent_for_dbc_mismatch(tmp_path):
     controller = GuiController(start_timers=False)
     database, session_id = create_sqlite_replay(
