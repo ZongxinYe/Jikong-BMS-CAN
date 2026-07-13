@@ -32,7 +32,7 @@ def write_manifest(release_directory: str | Path) -> Path:
         raise FileNotFoundError("manifest input missing: " + ", ".join(map(str, missing)))
     manifest = {
         "product": "BMS CAN Monitor",
-        "version": "0.1.0",
+        "version": "1.2.0",
         "architecture": "x64",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "build_python": platform.python_version(),

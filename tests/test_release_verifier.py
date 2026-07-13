@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from bms_can_monitor import __version__
 from bms_can_monitor.canio.dll_loader import default_dll_path
 
 
@@ -15,6 +16,16 @@ def test_packaging_inputs_exist():
     assert (root / "src" / "bms_can_monitor" / "protocol" / "bms_jikong_v2_1.dbc").is_file()
     assert default_dll_path().is_file()
     assert (root / "docs" / "phase7-multi-bms-raw-replay.md").is_file()
+    assert (root / "docs" / "v1.2-record-replay-reliability.md").is_file()
+    assert __version__ == "1.2.0"
+    assert 'version = "1.2.0"' in (root / "pyproject.toml").read_text(
+        encoding="utf-8"
+    )
+    version_info = (root / "packaging" / "version_info.txt").read_text(
+        encoding="utf-8"
+    )
+    assert "FileVersion', u'1.2.0" in version_info
+    assert "ProductVersion', u'1.2.0" in version_info
 
 
 def test_release_verifier_reports_missing_directory(tmp_path):
@@ -52,5 +63,6 @@ def test_release_manifest_contains_critical_hashes(tmp_path):
     output = module.write_manifest(release)
     manifest = json.loads(output.read_text(encoding="utf-8"))
     assert manifest["architecture"] == "x64"
+    assert manifest["version"] == "1.2.0"
     assert len(manifest["files"]) == 3
     assert all(len(item["sha256"]) == 64 for item in manifest["files"])

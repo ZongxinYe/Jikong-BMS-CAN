@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 from time import time
@@ -8,7 +9,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
-from bms_can_monitor.data import RecordingReader, SessionMetadata, SessionRecorder
+from bms_can_monitor.data import (
+    RecorderWriteError,
+    RecordingReader,
+    SessionMetadata,
+    SessionRecorder,
+)
 from bms_can_monitor.gui.controller import DbcMismatchError, GuiController
 from bms_can_monitor.gui.demo import build_demo_frames
 from bms_can_monitor.protocol import CanFrame
@@ -92,13 +98,17 @@ def test_controller_emits_one_snapshot_per_changed_bms_address():
 
 
 def test_controller_records_gui_pipeline_session(tmp_path):
-    controller = GuiController(start_timers=False)
+    audit_path = tmp_path / "recording-audit.jsonl"
+    controller = GuiController(
+        start_timers=False,
+        recording_audit_path=audit_path,
+    )
     database = tmp_path / "gui-session.sqlite3"
     session_id = controller.start_recording(database, note="GUI test")
     frames = build_demo_frames(time(), 2)
     controller.inject_frames(frames)
     controller.drain_once(time_budget_ms=100)
-    controller.stop_recording()
+    result = controller.stop_recording()
 
     assert session_id == 1
     assert count_rows(database, "raw_frames") == len(frames)
@@ -107,6 +117,21 @@ def test_controller_records_gui_pipeline_session(tmp_path):
     assert summary.storage_mode == "raw_only"
     assert summary.detected_addresses == (0, 1, 2)
     assert summary.dbc_sha256 == controller.current_dbc_sha256
+    assert result is not None and result.portable is True
+    state = controller.recording_state
+    assert state.active is False
+    assert state.database_path == database
+    assert state.session_id == session_id
+    assert state.stop_reason == "user"
+    assert state.stats is not None
+    assert state.stats.frames_written == len(frames)
+    assert state.checkpoint is not None and state.checkpoint.complete is True
+    audit_rows = [
+        json.loads(line)
+        for line in audit_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert [row["stage"] for row in audit_rows] == ["started", "stopped"]
+    assert audit_rows[-1]["details"]["checkpoint"]["busy"] == 0
     controller.shutdown()
 
 
@@ -161,8 +186,36 @@ def test_controller_replays_sqlite_and_rebuilds_multiple_bms(tmp_path):
     controller.shutdown()
 
 
+def test_controller_defers_replay_terminal_until_frame_queue_is_drained(tmp_path):
+    controller = GuiController(start_timers=False)
+    try:
+        database, session_id = create_sqlite_replay(controller, tmp_path)
+        controller.start_replay(database, session_id=session_id, speed=1000.0)
+        controller._source_thread.join(1)
+        replay_worker = controller._replay_worker
+        assert replay_worker is not None
+        replay_worker.join(1)
+        assert controller.frame_queue.qsize() == 2
+
+        controller.drain_once(frame_limit=1, time_budget_ms=100)
+
+        assert controller.frame_queue.qsize() == 1
+        assert controller.source_state.mode == "replay"
+
+        controller.drain_once(frame_limit=1, time_budget_ms=100)
+
+        assert controller.frame_queue.empty()
+        assert controller.source_state.mode == "idle"
+        assert controller.pipeline.snapshot(1).signals["SOC"].value == 34
+    finally:
+        controller.shutdown()
+
+
 def test_five_bms_raw_recording_replay_preserves_address_scoped_state(tmp_path):
-    recorded = GuiController(start_timers=False)
+    recorded = GuiController(
+        start_timers=False,
+        recording_audit_path=tmp_path / "five-bms-recording-audit.jsonl",
+    )
     database = tmp_path / "five-bms-roundtrip.sqlite3"
     session_id = recorded.start_recording(database, note="5 BMS roundtrip")
     frames = build_demo_frames(time(), 20, range(5))
@@ -218,7 +271,10 @@ def test_controller_requires_explicit_consent_for_dbc_mismatch(tmp_path):
 
 
 def test_controller_blocks_replaying_active_recording_database(tmp_path):
-    controller = GuiController(start_timers=False)
+    controller = GuiController(
+        start_timers=False,
+        recording_audit_path=tmp_path / "active-recording-audit.jsonl",
+    )
     database = tmp_path / "active.sqlite3"
     controller.start_recording(database)
 
@@ -226,4 +282,57 @@ def test_controller_blocks_replaying_active_recording_database(tmp_path):
         controller.start_replay(database)
 
     controller.stop_recording()
+    controller.shutdown()
+
+
+def test_recording_audit_failure_does_not_stop_sqlite_recording(tmp_path):
+    audit_directory = tmp_path / "audit-is-a-directory"
+    audit_directory.mkdir()
+    controller = GuiController(
+        start_timers=False,
+        recording_audit_path=audit_directory,
+    )
+    database = tmp_path / "session.sqlite3"
+
+    controller.start_recording(database)
+    controller.inject_frames(build_demo_frames(time(), 1))
+    controller.drain_once(time_budget_ms=100)
+    result = controller.stop_recording()
+
+    assert result is not None
+    assert result.stats.frames_written > 0
+    assert RecordingReader(database).session(result.session_id).is_finalized is True
+    controller.shutdown()
+
+
+def test_recorder_error_retains_failed_session_details(tmp_path, monkeypatch):
+    audit_path = tmp_path / "recording-audit.jsonl"
+    controller = GuiController(
+        start_timers=False,
+        recording_audit_path=audit_path,
+    )
+    database = tmp_path / "failed.sqlite3"
+    session_id = controller.start_recording(database)
+    recorder = controller._recorder
+    assert recorder is not None
+    monkeypatch.setattr(controller, "_stop_failed_recorder", lambda *_args: None)
+    errors = []
+    controller.error_raised.connect(errors.append)
+
+    controller._handle_recorder_error(RecorderWriteError("disk full"))
+
+    state = controller.recording_state
+    assert state.active is False
+    assert state.database_path == database
+    assert state.session_id == session_id
+    assert state.stop_reason == "error"
+    assert state.message == "disk full"
+    assert errors == ["数据记录已停止：disk full"]
+    rows = [
+        json.loads(line)
+        for line in audit_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert [row["stage"] for row in rows] == ["started", "failed"]
+    assert rows[-1]["details"]["error"] == "disk full"
+    recorder.stop()
     controller.shutdown()

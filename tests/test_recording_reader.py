@@ -56,6 +56,17 @@ def test_reader_lists_v2_session_metadata_and_frame_bounds(tmp_path):
     assert summary.first_frame_timestamp == 11.0
     assert summary.last_frame_timestamp == 12.0
     assert summary.duration == 1.0
+    assert summary.is_finalized is True
+
+
+def test_reader_marks_session_without_end_time_as_unfinalized(tmp_path):
+    database, session_id = create_recording(tmp_path)
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE sessions SET ended_at = NULL WHERE id = ?", (session_id,)
+        )
+
+    assert RecordingReader(database).session(session_id).is_finalized is False
 
 
 def test_reader_streams_frames_in_repeatable_chunks_and_is_read_only(tmp_path):

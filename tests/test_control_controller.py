@@ -67,6 +67,7 @@ def test_unconnected_or_unconfirmed_control_cannot_send(tmp_path):
     controller = GuiController(
         start_timers=False,
         control_audit_path=tmp_path / "audit.jsonl",
+        recording_audit_path=tmp_path / "recording-audit.jsonl",
     )
     with pytest.raises(ControlSafetyError, match="live CAN"):
         controller.send_control(command(), None)

@@ -136,6 +136,32 @@ class RecorderStats:
 
 
 @dataclass(frozen=True, slots=True)
+class WalCheckpointResult:
+    busy: int = 0
+    log_pages: int = 0
+    checkpointed_pages: int = 0
+    error: str = ""
+
+    @property
+    def complete(self) -> bool:
+        return not self.error and self.busy == 0
+
+
+@dataclass(frozen=True, slots=True)
+class RecorderStopResult:
+    session_id: int
+    ended_at: float
+    stats: RecorderStats
+    checkpoint: WalCheckpointResult
+
+    @property
+    def portable(self) -> bool:
+        """Whether the main SQLite file contains the complete stopped session."""
+
+        return self.checkpoint.complete
+
+
+@dataclass(frozen=True, slots=True)
 class _FrameItem:
     values: tuple[object, ...]
 
@@ -187,6 +213,7 @@ class SessionRecorder:
         self._frames_written = 0
         self._events_written = 0
         self._dropped_items = 0
+        self._last_stop_result: RecorderStopResult | None = None
 
     @property
     def session_id(self) -> int | None:
@@ -206,6 +233,10 @@ class SessionRecorder:
                 dropped_items=self._dropped_items,
                 queued_items=self._queue.qsize(),
             )
+
+    @property
+    def last_stop_result(self) -> RecorderStopResult | None:
+        return self._last_stop_result
 
     def start(self, metadata: SessionMetadata | None = None) -> int:
         with self._state_lock:
@@ -348,7 +379,7 @@ class SessionRecorder:
         ended_at: float | None = None,
         detected_addresses: Iterable[int] | None = None,
         timeout: float = 10.0,
-    ) -> None:
+    ) -> RecorderStopResult | None:
         addresses_json: str | None = None
         if detected_addresses is not None:
             addresses = tuple(sorted({int(value) for value in detected_addresses}))
@@ -358,7 +389,7 @@ class SessionRecorder:
         with self._state_lock:
             if not self._running:
                 self._raise_writer_error()
-                return
+                return self._last_stop_result
             thread = self._thread
 
         if thread is not None and thread.is_alive():
@@ -373,6 +404,7 @@ class SessionRecorder:
             thread.join(timeout)
 
         session_id = self._require_session_id()
+        ended_at_value = time() if ended_at is None else ended_at
         with self._connect() as connection:
             connection.execute(
                 """
@@ -382,15 +414,23 @@ class SessionRecorder:
                 WHERE id = ?
                 """,
                 (
-                    time() if ended_at is None else ended_at,
+                    ended_at_value,
                     addresses_json,
                     session_id,
                 ),
             )
             connection.commit()
+            checkpoint = self._checkpoint_wal(connection)
         with self._state_lock:
             self._running = False
+            self._last_stop_result = RecorderStopResult(
+                session_id=session_id,
+                ended_at=ended_at_value,
+                stats=self.stats,
+                checkpoint=checkpoint,
+            )
         self._raise_writer_error()
+        return self._last_stop_result
 
     close = stop
 
@@ -501,6 +541,20 @@ class SessionRecorder:
         connection.execute("PRAGMA journal_mode = WAL")
         connection.execute("PRAGMA synchronous = NORMAL")
         return connection
+
+    @staticmethod
+    def _checkpoint_wal(connection: sqlite3.Connection) -> WalCheckpointResult:
+        try:
+            row = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        except sqlite3.Error as exc:
+            return WalCheckpointResult(error=str(exc))
+        if row is None or len(row) != 3:
+            return WalCheckpointResult(error="SQLite returned no checkpoint result")
+        return WalCheckpointResult(
+            busy=int(row[0]),
+            log_pages=int(row[1]),
+            checkpointed_pages=int(row[2]),
+        )
 
     def __enter__(self) -> SessionRecorder:
         if not self.is_running:

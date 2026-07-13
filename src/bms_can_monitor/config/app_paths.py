@@ -40,3 +40,7 @@ def logs_directory() -> Path:
 
 def default_control_audit_path() -> Path:
     return logs_directory() / "control-audit.jsonl"
+
+
+def default_recording_audit_path() -> Path:
+    return logs_directory() / "recording-audit.jsonl"

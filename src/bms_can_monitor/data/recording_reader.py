@@ -41,6 +41,10 @@ class SessionSummary:
             return 0.0
         return max(0.0, self.last_frame_timestamp - self.first_frame_timestamp)
 
+    @property
+    def is_finalized(self) -> bool:
+        return self.ended_at is not None
+
 
 class RecordingReader:
     def __init__(self, database_path: str | Path) -> None:

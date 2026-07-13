@@ -2,6 +2,7 @@
 from .app_paths import (
     APP_DATA_ENV,
     default_control_audit_path,
+    default_recording_audit_path,
     logs_directory,
     records_directory,
     resource_root,
@@ -11,6 +12,7 @@ from .app_paths import (
 __all__ = [
     "APP_DATA_ENV",
     "default_control_audit_path",
+    "default_recording_audit_path",
     "logs_directory",
     "records_directory",
     "resource_root",

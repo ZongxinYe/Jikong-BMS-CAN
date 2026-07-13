@@ -24,7 +24,8 @@ def verify_release(path: str | Path, *, launch: bool = False) -> tuple[str, ...]
     multi_bms_guide = (
         release / "Documentation" / "phase7-multi-bms-raw-replay.md"
     )
-    required = (release, internal, executable, dll, dbc, multi_bms_guide)
+    v12_guide = release / "Documentation" / "v1.2-record-replay-reliability.md"
+    required = (release, internal, executable, dll, dbc, multi_bms_guide, v12_guide)
     missing = [item for item in required if not item.exists()]
     if missing:
         raise RuntimeError("release is missing: " + ", ".join(str(item) for item in missing))
@@ -38,6 +39,7 @@ def verify_release(path: str | Path, *, launch: bool = False) -> tuple[str, ...]
         f"controlcan={dll}",
         f"dbc={dbc}",
         f"multi_bms_guide={multi_bms_guide}",
+        f"v12_guide={v12_guide}",
     ]
     if launch:
         environment = os.environ.copy()

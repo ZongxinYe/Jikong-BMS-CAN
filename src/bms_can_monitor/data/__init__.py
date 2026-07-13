@@ -16,9 +16,11 @@ from .recorder import (
     RecorderError,
     RecorderQueueFull,
     RecorderStats,
+    RecorderStopResult,
     RecorderWriteError,
     SessionMetadata,
     SessionRecorder,
+    WalCheckpointResult,
 )
 from .recording_reader import (
     RecordingReadError,
@@ -26,6 +28,7 @@ from .recording_reader import (
     SessionSummary,
     SqliteReplaySource,
 )
+from .recording_audit import RecordingAuditError, RecordingAuditLog
 from .state_store import BmsStateStore
 
 __all__ = [
@@ -40,8 +43,11 @@ __all__ = [
     "RecorderError",
     "RecorderQueueFull",
     "RecorderStats",
+    "RecorderStopResult",
     "RecorderWriteError",
     "RecordingReadError",
+    "RecordingAuditError",
+    "RecordingAuditLog",
     "RecordingReader",
     "SessionMetadata",
     "SessionRecorder",
@@ -49,6 +55,7 @@ __all__ = [
     "SqliteReplaySource",
     "SignalPoint",
     "SignalRingBuffer",
+    "WalCheckpointResult",
     "export_events",
     "export_raw_frames",
     "export_session",

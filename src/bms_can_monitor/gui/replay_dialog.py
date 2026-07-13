@@ -33,9 +33,9 @@ class ReplaySessionDialog(QDialog):
         self.resize(820, 360)
 
         root = QVBoxLayout(self)
-        self.table = QTableWidget(len(sessions), 6)
+        self.table = QTableWidget(len(sessions), 7)
         self.table.setHorizontalHeaderLabels(
-            ("会话", "开始时间", "时长", "帧数", "CAN", "BMS 地址")
+            ("会话", "开始时间", "时长", "帧数", "CAN", "BMS 地址", "状态")
         )
         self.table.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows
@@ -56,10 +56,11 @@ class ReplaySessionDialog(QDialog):
                 f"CAN{session.channel + 1} / {session.bitrate // 1000} kbps",
                 ", ".join(str(value) for value in session.detected_addresses)
                 or "--",
+                "已完成" if session.is_finalized else "未收尾",
             )
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
-                if column in {0, 2, 3, 4, 5}:
+                if column in {0, 2, 3, 4, 5, 6}:
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.table.setItem(row, column, item)
         header = self.table.horizontalHeader()

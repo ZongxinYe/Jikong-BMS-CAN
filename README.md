@@ -13,6 +13,8 @@
 - 支持 CSV 和 SQLite 离线回放，并与真实设备统一输出 `CanFrame`。
 - 支持多 BMS 地址自动路由、独立状态和复合波形缓存。
 - 支持 raw-only SQLite 后台记录和回放/导出时按当前 DBC 重新解码。
+- 支持记录停止时 WAL checkpoint、停止原因留存和独立 `recording-audit.jsonl` 诊断日志。
+- 回放自然结束或停止后保留最后快照和波形；只有主动清空或启动新数据源时才重置。
 - 支持按地址切换的多 BMS 总览、温度摘要和带红绿极值的单体压差卡片。
 - 支持完整单体扫描后的合计电压，在总压卡片中对照显示并作为多 BMS 波形信号。
 - 支持显示由 CAN ID 解析的设备地址，以及 BATT_ST2 的剩余容量、满充容量、循环容量和循环次数。
@@ -116,3 +118,5 @@ recorder.stop(detected_addresses=pipeline.detected_addresses)
 ```
 
 schema v2 新会话只保存完整原始帧和事件，不保存逐信号样本。数据库结构、波形缓存和 CSV 导出说明见 `docs\phase3-data-recording.md`。
+
+正常停止会排空后台队列、写入会话结束时间并执行 WAL checkpoint。状态栏显示“已保存”后，主 `.sqlite3` 文件可以独立携带；若显示“需保留 WAL”，必须把同名 `-wal` 和 `-shm` 文件与主库放在同一目录。记录开始、停止和错误原因另存于用户数据目录的 `logs\recording-audit.jsonl`。v1.2 的完整行为和验收结果见 `docs\v1.2-record-replay-reliability.md`。

@@ -3,6 +3,7 @@ from pathlib import Path
 from bms_can_monitor.config import (
     APP_DATA_ENV,
     default_control_audit_path,
+    default_recording_audit_path,
     records_directory,
     resource_root,
     user_data_directory,
@@ -15,6 +16,10 @@ def test_user_data_path_can_be_overridden(monkeypatch, tmp_path):
     assert user_data_directory() == target.resolve()
     assert records_directory() == target.resolve() / "records"
     assert default_control_audit_path() == target.resolve() / "logs" / "control-audit.jsonl"
+    assert (
+        default_recording_audit_path()
+        == target.resolve() / "logs" / "recording-audit.jsonl"
+    )
 
 
 def test_resource_root_uses_pyinstaller_meipass(monkeypatch, tmp_path):

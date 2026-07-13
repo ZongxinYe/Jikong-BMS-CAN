@@ -9,6 +9,7 @@ dist\BMS-CAN-Monitor\
   BMS-CAN-Monitor.exe
   Documentation\
     phase7-multi-bms-raw-replay.md
+    v1.2-record-replay-reliability.md
   release-manifest.json
   _internal\
     bms_can_monitor\protocol\bms_jikong_v2_1.dbc
@@ -40,6 +41,7 @@ powershell -ExecutionPolicy Bypass -File tools\build_windows_release.ps1 -SkipBu
 %LOCALAPPDATA%\BMS CAN Monitor\
   records\
   logs\control-audit.jsonl
+  logs\recording-audit.jsonl
 ```
 
 台架需要把数据写到其他磁盘时，可在启动前设置：
@@ -68,6 +70,8 @@ $env:BMS_CAN_MONITOR_DATA_DIR = "D:\BMS-Test-Data"
 4. 在 CAN 报文页确认存在 `0x02F4`、`0x18F128F4` 等预期报文。
 5. 开启记录后选择 SQLite 文件，观察状态栏记录队列不持续增长。
 6. 停止时先停止记录，再停止 CAN 数据源。
+
+记录停止后，状态栏应显示“已保存 #N”或明确提示“需保留 WAL”。前者表示 checkpoint 完成，主 `.sqlite3` 可以独立复制；后者必须连同同名 `-wal` 和 `-shm` 一起复制。回放到末端后，最后波形和读数应停留，点击“清空”或启动新数据源后才重置。
 
 多个 BMS 地址会自动出现在总览标签和波形 BMS 列表中。SQLite 新会话只保存完整原始帧；记录可直接从界面回放，并按当前 DBC 重新生成各地址数据。详细说明见 `phase7-multi-bms-raw-replay.md`。
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bms-can-monitor"
-version = "0.1.0"
+version = "1.2.0"
 description = "CANalyst-II based CAN tool and Jikong BMS monitor."
 requires-python = ">=3.12"
 dependencies = [

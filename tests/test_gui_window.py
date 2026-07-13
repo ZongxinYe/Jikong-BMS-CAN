@@ -1,11 +1,16 @@
 import os
+import sqlite3
 from time import time
+
+import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
-from bms_can_monitor.gui.controller import GuiController
+from bms_can_monitor.canio.events import CanEvent, CanEventType
+from bms_can_monitor.data import BmsSignalKey, SessionMetadata, SessionRecorder
+from bms_can_monitor.gui.controller import GuiController, SourceState
 from bms_can_monitor.gui.demo import build_demo_frames
 from bms_can_monitor.gui.app import configure_application
 from bms_can_monitor.gui.main_window import MainWindow
@@ -112,3 +117,94 @@ def test_main_window_creates_and_clears_five_bms_dashboards():
 
     window.close()
     app.processEvents()
+
+
+def test_replay_finish_keeps_last_waveform_visible():
+    app = QApplication.instance() or QApplication([])
+    configure_application(app)
+    controller = GuiController(start_timers=False)
+    window = MainWindow(controller)
+    try:
+        controller._set_source_state(
+            SourceState("replay", "离线回放中", active=True)
+        )
+        controller.inject_frames(
+            [
+                CanFrame(
+                    0x02F4,
+                    bytes.fromhex("99 01 A0 0F 00"),
+                    timestamp=10.0,
+                )
+            ]
+        )
+        controller.drain_once(time_budget_ms=100)
+        app.processEvents()
+        window.waveform_panel.refresh()
+        key = BmsSignalKey(0, "BattVolt")
+        before_x, before_y = window.waveform_panel._curves[key].getData()
+
+        controller._enqueue_event(
+            CanEvent(CanEventType.REPLAY_FINISHED, "CAN replay finished")
+        )
+        controller.drain_once(time_budget_ms=100)
+        app.processEvents()
+
+        assert controller.source_state.mode == "idle"
+        assert window.waveform_panel.selected_addresses == (0,)
+        assert key in window.waveform_panel._curves
+        after_x, after_y = window.waveform_panel._curves[key].getData()
+        assert list(after_x) == list(before_x)
+        assert list(after_y) == list(before_y)
+        assert list(after_y) == pytest.approx([40.9])
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_unfinalized_recording_requires_confirmation_before_replay(
+    tmp_path, monkeypatch
+):
+    app = QApplication.instance() or QApplication([])
+    configure_application(app)
+    database = tmp_path / "unfinalized.sqlite3"
+    recorder = SessionRecorder(database)
+    session_id = recorder.start(SessionMetadata(started_at=1.0))
+    recorder.record_frame(
+        CanFrame(0x02F4, bytes.fromhex("13 01 D7 11 33"), timestamp=2.0)
+    )
+    recorder.stop(ended_at=3.0)
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE sessions SET ended_at = NULL WHERE id = ?", (session_id,)
+        )
+
+    controller = GuiController(start_timers=False)
+    window = MainWindow(controller)
+    warnings = []
+    started = []
+    monkeypatch.setattr(
+        QFileDialog,
+        "getOpenFileName",
+        lambda *args, **kwargs: (str(database), ""),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda *args, **kwargs: (
+            warnings.append((args, kwargs)) or QMessageBox.StandardButton.No
+        ),
+    )
+    monkeypatch.setattr(
+        controller,
+        "start_replay",
+        lambda *args, **kwargs: started.append((args, kwargs)),
+    )
+    try:
+        window._open_replay()
+
+        assert len(warnings) == 1
+        assert "-wal/-shm" in warnings[0][0][2]
+        assert started == []
+    finally:
+        window.close()
+        app.processEvents()

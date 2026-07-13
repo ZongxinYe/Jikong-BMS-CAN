@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from queue import Empty, Full, Queue
 from threading import RLock, Thread
@@ -28,6 +28,10 @@ from bms_can_monitor.data import (
     ControlAuditLog,
     DataPipeline,
     RecorderError,
+    RecorderStats,
+    RecorderStopResult,
+    RecordingAuditError,
+    RecordingAuditLog,
     RecordingReadError,
     RecordingReader,
     SessionMetadata,
@@ -35,6 +39,7 @@ from bms_can_monitor.data import (
     SessionRecorder,
     SignalRingBuffer,
     SqliteReplaySource,
+    WalCheckpointResult,
 )
 from bms_can_monitor.protocol import BmsSnapshot, CanFrame, ControlCommand
 
@@ -79,6 +84,10 @@ class RecordingState:
     active: bool = False
     database_path: Path | None = None
     session_id: int | None = None
+    stop_reason: str = ""
+    message: str = ""
+    stats: RecorderStats | None = None
+    checkpoint: WalCheckpointResult | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +131,7 @@ class GuiController(QObject):
         frame_queue_size: int = 50_000,
         start_timers: bool = True,
         control_audit_path: str | Path | None = None,
+        recording_audit_path: str | Path | None = None,
     ) -> None:
         super().__init__(parent)
         self.frame_queue: Queue[CanFrame] = Queue(maxsize=frame_queue_size)
@@ -141,11 +151,13 @@ class GuiController(QObject):
         self._receive_worker: CanReceiveWorker | None = None
         self._replay_worker: ReplayWorker | None = None
         self._replay_database_path: Path | None = None
+        self._pending_replay_terminal_event: CanEvent | None = None
         self._source_thread: Thread | None = None
         self._current_config = BusConfig()
         self._recorder: SessionRecorder | None = None
         self._control_gate = ControlSafetyGate()
         self._control_audit = ControlAuditLog(control_audit_path)
+        self._recording_audit = RecordingAuditLog(recording_audit_path)
         self._control_send_pending = False
         self._control_thread: Thread | None = None
         self._shutdown_requested = False
@@ -461,19 +473,102 @@ class GuiController(QObject):
         self.pipeline.recorder = recorder
         self._recording_state = RecordingState(True, path, session_id)
         self.recording_changed.emit(self._recording_state)
+        self._write_recording_audit(
+            "started",
+            path,
+            session_id=session_id,
+            details={"note": note},
+        )
         return session_id
 
-    def stop_recording(self) -> None:
+    def stop_recording(self, *, reason: str = "user") -> RecorderStopResult | None:
         recorder = self._recorder
         if recorder is None:
-            return
+            return None
+        path = recorder.database_path
+        session_id = recorder.session_id
         self.pipeline.recorder = None
         self._recorder = None
         try:
-            recorder.stop(detected_addresses=self.pipeline.detected_addresses)
-        finally:
-            self._recording_state = RecordingState()
+            result = recorder.stop(
+                detected_addresses=self.pipeline.detected_addresses
+            )
+        except RecorderError as exc:
+            stop_result = recorder.last_stop_result
+            self._recording_state = RecordingState(
+                database_path=path,
+                session_id=session_id,
+                stop_reason="error",
+                message=str(exc),
+                stats=(recorder.stats if stop_result is None else stop_result.stats),
+                checkpoint=(None if stop_result is None else stop_result.checkpoint),
+            )
             self.recording_changed.emit(self._recording_state)
+            self._write_recording_audit(
+                "failed",
+                path,
+                session_id=session_id,
+                reason="error",
+                error=str(exc),
+                result=stop_result,
+                stats=recorder.stats,
+            )
+            raise
+        if result is None:
+            return None
+        message = (
+            "数据库已完成收尾"
+            if result.portable
+            else "数据库仍依赖 WAL，请连同 sidecar 文件一起保留"
+        )
+        self._recording_state = RecordingState(
+            database_path=path,
+            session_id=session_id,
+            stop_reason=reason,
+            message=message,
+            stats=result.stats,
+            checkpoint=result.checkpoint,
+        )
+        self.recording_changed.emit(self._recording_state)
+        self._write_recording_audit(
+            "shutdown" if reason == "shutdown" else "stopped",
+            path,
+            session_id=session_id,
+            reason=reason,
+            result=result,
+        )
+        return result
+
+    def _write_recording_audit(
+        self,
+        stage: str,
+        database_path: str | Path,
+        *,
+        session_id: int | None,
+        reason: str = "",
+        error: str = "",
+        result: RecorderStopResult | None = None,
+        stats: RecorderStats | None = None,
+        details: dict[str, object] | None = None,
+    ) -> None:
+        payload = dict(details or {})
+        if stats is not None:
+            payload["stats"] = asdict(stats)
+        if result is not None:
+            payload["stats"] = asdict(result.stats)
+            payload["checkpoint"] = asdict(result.checkpoint)
+        if error:
+            payload["error"] = error
+        try:
+            self._recording_audit.write(
+                stage,
+                database_path,
+                session_id=session_id,
+                reason=reason,
+                details=payload,
+            )
+        except RecordingAuditError:
+            pass
 
     def authorize_control(
         self,
@@ -673,6 +768,7 @@ class GuiController(QObject):
     def reset_data(self) -> None:
         self._clear_queue(self.frame_queue)
         self._clear_queue(self._event_queue)
+        self._pending_replay_terminal_event = None
         previous_addresses = self.pipeline.detected_addresses
         self.pipeline.reset()
         self._frames_processed = 0
@@ -704,20 +800,18 @@ class GuiController(QObject):
                 event = self._event_queue.get_nowait()
             except Empty:
                 break
-            events.append(event)
-            try:
-                self.pipeline.process_event(event)
-            except RecorderError as exc:
-                self._handle_recorder_error(exc)
             if event.event_type in {
                 CanEventType.REPLAY_FINISHED,
                 CanEventType.REPLAY_STOPPED,
                 CanEventType.REPLAY_ERROR,
             }:
-                with self._source_lock:
-                    self._replay_worker = None
-                self._replay_database_path = None
-                self._set_source_state(SourceState())
+                self._pending_replay_terminal_event = event
+                continue
+            events.append(event)
+            try:
+                self.pipeline.process_event(event)
+            except RecorderError as exc:
+                self._handle_recorder_error(exc)
         if events:
             self.events_received.emit(events)
 
@@ -764,28 +858,77 @@ class GuiController(QObject):
         if detected_addresses != self._reported_addresses:
             self._reported_addresses = detected_addresses
             self.detected_addresses_changed.emit(detected_addresses)
+        terminal_event = self._pending_replay_terminal_event
+        if terminal_event is not None and self.frame_queue.empty():
+            self._pending_replay_terminal_event = None
+            try:
+                self.pipeline.process_event(terminal_event)
+            except RecorderError as exc:
+                self._handle_recorder_error(exc)
+            with self._source_lock:
+                self._replay_worker = None
+            self._replay_database_path = None
+            self._set_source_state(SourceState())
+            self.events_received.emit([terminal_event])
         return count
 
     def _handle_recorder_error(self, exc: RecorderError) -> None:
         recorder = self._recorder
         self.pipeline.recorder = None
         self._recorder = None
-        self._recording_state = RecordingState()
+        path = None if recorder is None else recorder.database_path
+        session_id = None if recorder is None else recorder.session_id
+        stats = None if recorder is None else recorder.stats
+        self._recording_state = RecordingState(
+            database_path=path,
+            session_id=session_id,
+            stop_reason="error",
+            message=str(exc),
+            stats=stats,
+        )
         self.recording_changed.emit(self._recording_state)
         self.error_raised.emit(f"数据记录已停止：{exc}")
         if recorder is not None:
+            self._write_recording_audit(
+                "failed",
+                recorder.database_path,
+                session_id=recorder.session_id,
+                reason="error",
+                error=str(exc),
+                stats=recorder.stats,
+            )
             Thread(
                 target=self._stop_failed_recorder,
-                args=(recorder,),
+                args=(recorder, str(exc)),
                 name="gui-stop-failed-recorder",
                 daemon=True,
             ).start()
 
-    def _stop_failed_recorder(self, recorder: SessionRecorder) -> None:
+    def _stop_failed_recorder(
+        self, recorder: SessionRecorder, original_error: str
+    ) -> None:
         try:
-            recorder.stop()
-        except RecorderError:
-            pass
+            result = recorder.stop()
+        except RecorderError as exc:
+            self._write_recording_audit(
+                "finalization_failed",
+                recorder.database_path,
+                session_id=recorder.session_id,
+                reason="error",
+                error=f"{original_error}; finalization: {exc}",
+                result=recorder.last_stop_result,
+                stats=recorder.stats,
+            )
+            return
+        self._write_recording_audit(
+            "finalized_after_error",
+            recorder.database_path,
+            session_id=recorder.session_id,
+            reason="error",
+            error=original_error,
+            result=result,
+            stats=recorder.stats,
+        )
 
     def emit_stats(self) -> GuiStats:
         now = monotonic()
@@ -838,6 +981,6 @@ class GuiController(QObject):
             self._control_thread.join(2.0)
         self._stop_source_blocking()
         try:
-            self.stop_recording()
+            self.stop_recording(reason="shutdown")
         except RecorderError as exc:
             self.error_raised.emit(f"停止记录失败：{exc}")

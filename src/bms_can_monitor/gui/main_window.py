@@ -391,6 +391,7 @@ class MainWindow(QMainWindow):
             return
         replay_path = Path(path)
         session_id: int | None = None
+        selected_session = None
         try:
             if replay_path.suffix.lower() in SQLITE_REPLAY_SUFFIXES:
                 sessions = self.controller.recording_sessions(replay_path)
@@ -403,6 +404,21 @@ class MainWindow(QMainWindow):
                     session_id = dialog.selected_session_id
                 else:
                     session_id = sessions[0].session_id
+                selected_session = next(
+                    session for session in sessions if session.session_id == session_id
+                )
+                if not selected_session.is_finalized:
+                    answer = QMessageBox.warning(
+                        self,
+                        "记录未正常收尾",
+                        "该会话没有结束标记，可能仍在记录、程序曾异常退出，或复制时遗漏了 -wal/-shm 文件。\n\n"
+                        "继续回放时只能保证读取当前可见的数据。",
+                        QMessageBox.StandardButton.Yes
+                        | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.No,
+                    )
+                    if answer != QMessageBox.StandardButton.Yes:
+                        return
             self.controller.start_replay(
                 replay_path,
                 speed=self.replay_speed_spin.value(),
@@ -623,8 +639,6 @@ class MainWindow(QMainWindow):
         self.source_label.style().unpolish(self.source_label)
         self.source_label.style().polish(self.source_label)
         idle = state.mode == "idle"
-        if idle:
-            self.waveform_panel.set_available_addresses(())
         self.connect_action.setEnabled(idle)
         self.replay_action.setEnabled(idle)
         self.demo_action.setEnabled(idle)
@@ -648,6 +662,23 @@ class MainWindow(QMainWindow):
         if state.active:
             self.record_status.setText(f"记录 #{state.session_id}")
             self.record_status.setToolTip(str(state.database_path))
+        elif state.session_id is not None:
+            if state.stop_reason == "error":
+                self.record_status.setText(f"记录异常停止 #{state.session_id}")
+            elif state.checkpoint is not None and state.checkpoint.complete:
+                self.record_status.setText(f"已保存 #{state.session_id}")
+            else:
+                self.record_status.setText(f"已停止 #{state.session_id}（需保留 WAL）")
+            details = [str(state.database_path), state.message]
+            if state.stats is not None:
+                details.append(f"原始帧：{state.stats.frames_written:,}")
+                details.append(f"事件：{state.stats.events_written:,}")
+            if state.checkpoint is not None:
+                details.append(
+                    "WAL checkpoint："
+                    + ("完成" if state.checkpoint.complete else "未完成")
+                )
+            self.record_status.setToolTip("\n".join(item for item in details if item))
         else:
             self.record_status.setText("未记录")
             self.record_status.setToolTip("")

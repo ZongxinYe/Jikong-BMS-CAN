@@ -40,4 +40,6 @@ def test_replay_session_dialog_lists_sessions_and_defaults_to_latest():
     assert dialog.selected_session_id == 2
     assert dialog.table.item(1, 3).text() == "100"
     assert dialog.table.item(1, 5).text() == "0, 1, 2"
+    assert dialog.table.item(0, 6).text() == "已完成"
+    assert dialog.table.item(1, 6).text() == "已完成"
     dialog.close()
